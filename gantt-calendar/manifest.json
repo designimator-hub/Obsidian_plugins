@@ -1,0 +1,10 @@
+{
+	"id": "wright-gantt-calendar",
+	"name": "Wright Gantt Calendar",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Renders Gantt charts from note frontmatter dates. No dependencies, no build step, no network access.",
+	"author": "James Wright",
+	"authorUrl": "https://github.com/designimator-hub/Obsidian_plugins",
+	"isDesktopOnly": false
+}

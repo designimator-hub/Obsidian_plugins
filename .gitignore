@@ -1,0 +1,17 @@
+# This repository has no dependencies and no build step by design.
+# If node_modules ever appears here, something has gone wrong.
+node_modules/
+package-lock.json
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.idea/
+.vscode/
+
+# Obsidian per-machine state, if a vault is ever symlinked in for testing
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+data.json

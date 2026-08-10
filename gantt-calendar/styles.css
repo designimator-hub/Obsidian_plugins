@@ -1,0 +1,355 @@
+/*
+ * Wright Gantt Calendar - styles
+ *
+ * Every colour, font, and radius below resolves to an Obsidian theme
+ * variable, with a plain fallback for themes that omit one. Nothing is
+ * hardcoded, so the chart follows light/dark and any community theme.
+ */
+
+.wgantt {
+	--wg-head-height: 44px;
+	--wg-label-width: 240px;
+	--wg-row-height: 30px;
+	--wg-bar-height: 18px;
+	--wg-border: var(--background-modifier-border, rgba(128, 128, 128, 0.25));
+	--wg-radius: var(--radius-s, 4px);
+
+	font-family: var(--font-interface, inherit);
+	font-size: var(--font-ui-small, 13px);
+	color: var(--text-normal, inherit);
+	border: 1px solid var(--wg-border);
+	border-radius: var(--radius-m, 6px);
+	background: var(--background-primary, transparent);
+	overflow: hidden;
+	margin: 0.5em 0;
+}
+
+/* ---------- title and toolbar ---------- */
+
+.wgantt-title {
+	padding: 10px 12px 0 12px;
+	font-size: var(--font-ui-medium, 15px);
+	font-weight: var(--font-semibold, 600);
+	color: var(--text-normal);
+}
+
+.wgantt-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 12px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller, 12px);
+}
+
+.wgantt-scalename {
+	margin-left: auto;
+	text-transform: capitalize;
+	padding: 1px 8px;
+	border: 1px solid var(--wg-border);
+	border-radius: var(--wg-radius);
+}
+
+/* ---------- layout ---------- */
+
+.wgantt-body {
+	display: flex;
+	align-items: flex-start;
+	border-top: 1px solid var(--wg-border);
+	max-height: 70vh;
+	overflow-y: auto;
+}
+
+.wgantt-labels {
+	flex: 0 0 var(--wg-label-width);
+	width: var(--wg-label-width);
+	border-right: 1px solid var(--wg-border);
+	background: var(--background-secondary, transparent);
+	position: sticky;
+	left: 0;
+	z-index: 3;
+}
+
+.wgantt-labels-head {
+	height: var(--wg-head-height);
+	border-bottom: 1px solid var(--wg-border);
+	background: var(--background-secondary, transparent);
+	position: sticky;
+	top: 0;
+	z-index: 4;
+}
+
+.wgantt-scroll {
+	flex: 1 1 auto;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+
+.wgantt-canvas {
+	position: relative;
+	min-height: 100%;
+}
+
+/* ---------- axis ---------- */
+
+.wgantt-head {
+	height: var(--wg-head-height);
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--background-secondary, var(--background-primary));
+	border-bottom: 1px solid var(--wg-border);
+}
+
+.wgantt-major,
+.wgantt-minor {
+	position: relative;
+	height: 22px;
+}
+
+.wgantt-major {
+	border-bottom: 1px solid var(--wg-border);
+}
+
+.wgantt-major-cell {
+	position: absolute;
+	top: 0;
+	height: 22px;
+	line-height: 22px;
+	padding-left: 6px;
+	font-weight: var(--font-semibold, 600);
+	font-size: var(--font-ui-smaller, 12px);
+	color: var(--text-normal);
+	border-left: 1px solid var(--wg-border);
+	white-space: nowrap;
+	overflow: hidden;
+	box-sizing: border-box;
+}
+
+.wgantt-minor-cell {
+	position: absolute;
+	top: 0;
+	height: 22px;
+	line-height: 22px;
+	padding-left: 4px;
+	font-size: 11px;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	box-sizing: border-box;
+}
+
+.wgantt-minor-cell.is-weekend {
+	color: var(--text-faint);
+}
+
+/* ---------- grid ---------- */
+
+.wgantt-grid {
+	position: absolute;
+	top: var(--wg-head-height);
+	bottom: 0;
+	left: 0;
+	right: 0;
+	pointer-events: none;
+	z-index: 0;
+}
+
+.wgantt-gridline {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--wg-border);
+	opacity: 0.5;
+}
+
+/* ---------- rows ---------- */
+
+.wgantt-rows {
+	position: relative;
+	z-index: 1;
+}
+
+.wgantt-row {
+	position: relative;
+	height: var(--wg-row-height);
+}
+
+.wgantt-label {
+	height: var(--wg-row-height);
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	cursor: pointer;
+	border-bottom: 1px solid transparent;
+}
+
+.wgantt-label:hover {
+	background: var(--background-modifier-hover, rgba(128, 128, 128, 0.1));
+}
+
+.wgantt-label-text {
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--text-normal);
+}
+
+.wgantt-label:hover .wgantt-label-text {
+	color: var(--text-accent, var(--interactive-accent));
+}
+
+.wgantt-dot {
+	flex: 0 0 auto;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	opacity: 0.85;
+}
+
+/* ---------- group headers ---------- */
+
+.wgantt-group-label,
+.wgantt-group-row {
+	height: 26px;
+	box-sizing: border-box;
+}
+
+.wgantt-group-label {
+	display: flex;
+	align-items: center;
+	padding: 0 8px;
+	font-size: var(--font-ui-smaller, 12px);
+	font-weight: var(--font-semibold, 600);
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	background: var(--background-modifier-hover, rgba(128, 128, 128, 0.08));
+	border-top: 1px solid var(--wg-border);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wgantt-group-row {
+	background: var(--background-modifier-hover, rgba(128, 128, 128, 0.05));
+	border-top: 1px solid var(--wg-border);
+}
+
+/* ---------- bars ---------- */
+
+.wgantt-bar {
+	position: absolute;
+	top: calc((var(--wg-row-height) - var(--wg-bar-height)) / 2);
+	height: var(--wg-bar-height);
+	border-radius: var(--wg-radius);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	overflow: hidden;
+	transition: filter 100ms ease-in-out;
+	box-sizing: border-box;
+}
+
+.wgantt-bar:hover {
+	filter: brightness(1.15);
+}
+
+.wgantt-bar.is-done {
+	opacity: 0.55;
+}
+
+.wgantt-bar.is-reversed {
+	outline: 1px dashed var(--color-red, #e05252);
+	outline-offset: 1px;
+}
+
+.wgantt-bar-text {
+	padding: 0 6px;
+	font-size: 11px;
+	line-height: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	/*
+	 * Bars take theme accent colours whose lightness we cannot know, so the
+	 * label is white with a soft dark shadow. That stays legible on every
+	 * built-in and community palette tested.
+	 */
+	color: #fff;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.wgantt-milestone {
+	position: absolute;
+	top: calc((var(--wg-row-height) - var(--wg-bar-height)) / 2);
+	width: var(--wg-bar-height);
+	height: var(--wg-bar-height);
+	transform: translateX(-50%) rotate(45deg);
+	border-radius: 2px;
+	cursor: pointer;
+}
+
+.wgantt-milestone:hover {
+	filter: brightness(1.15);
+}
+
+/* ---------- today ---------- */
+
+.wgantt-today {
+	position: absolute;
+	top: var(--wg-head-height);
+	bottom: 0;
+	width: 2px;
+	margin-left: -1px;
+	background: var(--color-red, #e05252);
+	opacity: 0.7;
+	pointer-events: none;
+	z-index: 2;
+}
+
+/* ---------- states ---------- */
+
+.wgantt-empty {
+	padding: 16px 12px;
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.wgantt-error {
+	padding: 12px;
+	color: var(--text-error, var(--color-red, #e05252));
+}
+
+.wgantt-error-title {
+	font-weight: var(--font-semibold, 600);
+	margin-bottom: 4px;
+}
+
+.wgantt-error ul {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.wgantt-about p {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller, 12px);
+	margin: 0;
+}
+
+/* ---------- print and narrow screens ---------- */
+
+@media print {
+	.wgantt-body {
+		max-height: none;
+		overflow: visible;
+	}
+
+	.wgantt-scroll {
+		overflow: visible;
+	}
+}
