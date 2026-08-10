@@ -54,15 +54,20 @@
 
 /* ---------- layout ----------
  *
- * One scroll container, with a CSS grid inside it:
+ * One scroll container. Inside it, a wrapper as wide as the whole chart,
+ * holding two full-width flex rows:
  *
- *     corner | head      <- sticky to the top
- *     labels | canvas    <- labels sticky to the left
+ *     corner | head        <- header row, sticky to the top
+ *     labels | canvas      <- label column, sticky to the left
  *
- * Sticky positions resolve against that single scroller, so the header row
- * and the label column stay frozen on both axes. An earlier version put the
- * two axes in separate scrollers, which broke the sticky header whenever the
- * chart was scrolled vertically.
+ * This shape is deliberate. A sticky element can only move within its
+ * containing block. An earlier version used a CSS grid, where a grid item's
+ * containing block is its own grid area - each item exactly filled its area,
+ * so nothing could slide and both frozen panes silently did nothing.
+ *
+ * Here the header row sits inside a wrapper that is far taller than it is,
+ * and the corner and label column sit inside rows that are far wider than
+ * they are, so each has somewhere to slide.
  */
 
 .wgantt-body {
@@ -78,19 +83,30 @@
 	box-shadow: inset 0 0 0 2px var(--interactive-accent, #888);
 }
 
-.wgantt-grid-wrap {
-	display: grid;
-	grid-template-rows: var(--wg-head-height) auto;
-	align-items: start;
-	min-width: min-content;
+.wgantt-inner {
+	position: relative;
+}
+
+.wgantt-headrow {
+	display: flex;
+	position: sticky;
+	top: 0;
+	z-index: 5;
+}
+
+.wgantt-rowsarea {
+	display: flex;
+	align-items: flex-start;
 }
 
 .wgantt-corner {
 	position: sticky;
-	top: 0;
 	left: 0;
 	z-index: 6;
+	flex: 0 0 var(--wg-label-width);
+	width: var(--wg-label-width);
 	height: var(--wg-head-height);
+	box-sizing: border-box;
 	background: var(--background-secondary, var(--background-primary));
 	border-right: 1px solid var(--wg-border);
 	border-bottom: 1px solid var(--wg-border);
@@ -100,12 +116,16 @@
 	position: sticky;
 	left: 0;
 	z-index: 3;
+	flex: 0 0 var(--wg-label-width);
+	width: var(--wg-label-width);
+	box-sizing: border-box;
 	border-right: 1px solid var(--wg-border);
 	background: var(--background-secondary, var(--background-primary));
 }
 
 .wgantt-canvas {
 	position: relative;
+	flex: 0 0 auto;
 	z-index: 1;
 }
 
@@ -116,10 +136,10 @@
 /* ---------- axis ---------- */
 
 .wgantt-head {
-	position: sticky;
-	top: 0;
-	z-index: 4;
+	position: relative;
+	flex: 0 0 auto;
 	height: var(--wg-head-height);
+	box-sizing: border-box;
 	background: var(--background-secondary, var(--background-primary));
 	border-bottom: 1px solid var(--wg-border);
 }

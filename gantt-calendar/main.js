@@ -38,6 +38,9 @@ const RIBBON_ICON = 'calendar-range';
  * Settings
  * ------------------------------------------------------------------ */
 
+/* Bumped when a stored settings shape needs migrating. See migrateSettings. */
+const SETTINGS_VERSION = 2;
+
 const DEFAULT_SETTINGS = {
 	startField: 'start_date',
 	endField: 'due_date',
@@ -54,6 +57,7 @@ const DEFAULT_SETTINGS = {
 	allowEditing: true,
 	newProjectFolder: '03_Projects/Active',
 	viewHideFinished: false,
+	settingsVersion: SETTINGS_VERSION,
 	newProjectType: 'project',
 	// Remembered state for the sidebar view.
 	viewFolder: '03_Projects',
@@ -67,6 +71,29 @@ const STATUS_CHOICES = [
 	'active', 'proposed', 'planned', 'waiting', 'paused',
 	'completed', 'cancelled', 'reference', 'evergreen',
 ];
+
+/*
+ * Settings migrations.
+ *
+ * Version 2: the view used to default to 03_Projects/Active, which silently
+ * excluded every proposed and completed project - the chart looked like it
+ * was working while hiding most of the data. Widen it to the parent folder
+ * once, for anyone carrying the old value.
+ *
+ * A deliberately explicit value is left alone; only the old default is
+ * rewritten. Pure so it can be tested.
+ */
+function migrateSettings(stored) {
+	const s = Object.assign({}, stored || {});
+	const from = s.settingsVersion || 1;
+
+	if (from < 2) {
+		if (s.viewFolder === '03_Projects/Active') s.viewFolder = '03_Projects';
+	}
+
+	s.settingsVersion = SETTINGS_VERSION;
+	return s;
+}
 
 /* Statuses that count as finished for the "hide finished" toggle. */
 const FINISHED_STATUSES = ['completed', 'done'];
@@ -860,13 +887,35 @@ async function buildChart(root, plugin, cfg, sourcePath, onChange, onScaleChange
 	body.style.setProperty('--wg-bar-height', s.barHeight + 'px');
 	body.tabIndex = 0; // so arrow keys and Home/End reach it
 
-	const wrap = el('div', 'wgantt-grid-wrap', body);
-	wrap.style.gridTemplateColumns = `var(--wg-label-width) ${canvasWidth}px`;
+	/*
+	 * Structure matters here, and a CSS grid does not work.
+	 *
+	 * A sticky element can only slide within its containing block, and for a
+	 * grid item the containing block is its own grid area. Each item exactly
+	 * filled its area, so there was nowhere to slide and both the frozen
+	 * header and the frozen label column silently did nothing.
+	 *
+	 * Instead: two full-width flex rows inside a wrapper as wide as the whole
+	 * chart. The header row is sticky inside the tall wrapper, so it has room
+	 * to slide down; the corner and label column are sticky inside full-width
+	 * rows, so they have room to slide right.
+	 */
+	const totalWidth = s.labelWidth + canvasWidth;
 
-	el('div', 'wgantt-corner', wrap);
-	const head = el('div', 'wgantt-head', wrap);
-	const labels = el('div', 'wgantt-labels', wrap);
-	const canvas = el('div', 'wgantt-canvas', wrap);
+	const inner = el('div', 'wgantt-inner', body);
+	inner.style.width = totalWidth + 'px';
+
+	const headRow = el('div', 'wgantt-headrow', inner);
+	headRow.style.width = totalWidth + 'px';
+	el('div', 'wgantt-corner', headRow);
+	const head = el('div', 'wgantt-head', headRow);
+	head.style.width = canvasWidth + 'px';
+
+	const rowsArea = el('div', 'wgantt-rowsarea', inner);
+	rowsArea.style.width = totalWidth + 'px';
+	const labels = el('div', 'wgantt-labels', rowsArea);
+	const canvas = el('div', 'wgantt-canvas', rowsArea);
+	canvas.style.width = canvasWidth + 'px';
 
 	buildAxis(head, scale, rangeStart, rangeEnd, x, s.weekStart);
 
@@ -923,7 +972,11 @@ async function buildChart(root, plugin, cfg, sourcePath, onChange, onScaleChange
 	zoomIn.disabled = scaleName === SCALE_ORDER[0];
 	zoomIn.addEventListener('click', () => onScaleChange && onScaleChange(zoomScale(scaleName, 'in')));
 
-	el('span', 'wgantt-count', info, `${items.length} item${items.length === 1 ? '' : 's'}`);
+	const scope = el('span', 'wgantt-count', info,
+		`${items.length} item${items.length === 1 ? '' : 's'}` +
+		(cfg.folder ? ` in ${cfg.folder}` : ' (whole vault)') +
+		(cfg.hideFinished ? ', finished hidden' : ''));
+	scope.title = 'What this chart is currently showing';
 
 	if (todayVisible) window.setTimeout(() => centreOn(t), 0);
 
@@ -1738,7 +1791,12 @@ module.exports = class GanttCalendarPlugin extends Plugin {
 
 	async loadSettings() {
 		const stored = await this.loadData();
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, stored || {});
+		const migrated = migrateSettings(stored);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, migrated);
+		// Persist the migration so it runs once, not on every load.
+		if (!stored || stored.settingsVersion !== SETTINGS_VERSION) {
+			await this.saveSettings();
+		}
 	}
 
 	async saveSettings() {
@@ -1759,6 +1817,7 @@ module.exports.__test = {
 	matchesTag, inScope, tickLabel, majorLabel,
 	shiftSpan, dragWrites, doneToggleWrites, safeFileName, newProjectContent,
 	isFinished, zoomScale, SCALE_ORDER, FINISHED_STATUSES,
+	migrateSettings, SETTINGS_VERSION,
 	SCALES, STATUS_COLORS, STATUS_CHOICES, DEFAULT_SETTINGS,
 	VIEW_TYPE_GANTT, RIBBON_ICON,
 };

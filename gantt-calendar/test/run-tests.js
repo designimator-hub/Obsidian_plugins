@@ -602,6 +602,49 @@ check('newProjectContent omits optional keys when unset', () => {
 	ok(/^start_date:\s*$/m.test(fm), 'start_date should be present but blank');
 });
 
+/* ---------- settings migration ---------- */
+
+check('migration widens the old Active-only view folder', () => {
+	const out = T.migrateSettings({ viewFolder: '03_Projects/Active' });
+	eq(out.viewFolder, '03_Projects', 'the old default hid every proposed project:');
+	eq(out.settingsVersion, T.SETTINGS_VERSION);
+});
+
+check('migration leaves a deliberately chosen folder alone', () => {
+	eq(T.migrateSettings({ viewFolder: '05_Faith' }).viewFolder, '05_Faith');
+	eq(T.migrateSettings({ viewFolder: '' }).viewFolder, '');
+	eq(T.migrateSettings({ viewFolder: '03_Projects/Proposed' }).viewFolder, '03_Projects/Proposed');
+});
+
+check('migration does not re-run once stamped', () => {
+	const once = T.migrateSettings({ viewFolder: '03_Projects/Active' });
+	// A user who deliberately picks Active afterwards must keep it.
+	once.viewFolder = '03_Projects/Active';
+	eq(T.migrateSettings(once).viewFolder, '03_Projects/Active');
+});
+
+check('migration copes with no stored settings at all', () => {
+	eq(T.migrateSettings(null).settingsVersion, T.SETTINGS_VERSION);
+	eq(T.migrateSettings(undefined).settingsVersion, T.SETTINGS_VERSION);
+	eq(T.migrateSettings({}).settingsVersion, T.SETTINGS_VERSION);
+});
+
+check('migration does not mutate the stored object', () => {
+	const stored = { viewFolder: '03_Projects/Active' };
+	T.migrateSettings(stored);
+	eq(stored.viewFolder, '03_Projects/Active', 'input was mutated:');
+	eq(stored.settingsVersion, undefined);
+});
+
+checkAsync('loadSettings applies the migration and persists it', async () => {
+	const p = new Plugin({}, {});
+	p._data = { viewFolder: '03_Projects/Active', viewScale: 'month' };
+	await p.loadSettings();
+	eq(p.settings.viewFolder, '03_Projects');
+	eq(p.settings.viewScale, 'month', 'unrelated settings must survive:');
+	eq(p._data.settingsVersion, T.SETTINGS_VERSION, 'migration should be saved back:');
+});
+
 /* ---------- finished filter and zoom ---------- */
 
 check('isFinished recognises the finished statuses only', () => {

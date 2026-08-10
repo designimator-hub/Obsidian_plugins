@@ -17,7 +17,7 @@ There is no build step. Copy the plugin folder into your vault:
 
 Then enable it in **Settings → Community plugins**.
 
-To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,760 lines, commented, and written in plain JavaScript rather than bundled output.
+To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,820 lines, commented, and written in plain JavaScript rather than bundled output.
 
 ## Usage
 
