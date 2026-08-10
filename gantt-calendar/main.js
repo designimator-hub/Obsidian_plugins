@@ -68,8 +68,8 @@ const DEFAULT_SETTINGS = {
 
 /* Statuses offered in the editing controls. */
 const STATUS_CHOICES = [
-	'active', 'proposed', 'planned', 'waiting', 'paused',
-	'completed', 'cancelled', 'reference', 'evergreen',
+	'active', 'proposed', 'planned', 'review', 'waiting', 'paused',
+	'completed', 'finished', 'cancelled', 'reference', 'evergreen',
 ];
 
 /*
@@ -95,8 +95,15 @@ function migrateSettings(stored) {
 	return s;
 }
 
-/* Statuses that count as finished for the "hide finished" toggle. */
-const FINISHED_STATUSES = ['completed', 'done'];
+/*
+ * Statuses that count as finished for the "hide finished" toggle.
+ *
+ * "finished" is here because that is the word the toggle uses, and people
+ * reasonably type it into the note. Leaving it out meant a note marked
+ * Finished was not hidden by the control that says it hides finished work.
+ * Comparison is case-insensitive, so "Finished" matches too.
+ */
+const FINISHED_STATUSES = ['completed', 'done', 'finished'];
 
 function isFinished(status) {
 	return FINISHED_STATUSES.includes(String(status || '').toLowerCase());
@@ -133,6 +140,8 @@ const STATUS_COLORS = {
 	paused: 'var(--color-yellow)',
 	completed: 'var(--text-faint)',
 	done: 'var(--text-faint)',
+	finished: 'var(--text-faint)',
+	review: 'var(--color-pink)',
 	cancelled: 'var(--color-red)',
 	archived: 'var(--text-faint)',
 	reference: 'var(--color-purple)',
@@ -637,7 +646,7 @@ function dragWrites(item, mode, span) {
 
 /* Which way the done toggle goes, and what it writes. */
 function doneToggleWrites(item, todayIso) {
-	const isDone = item.status === 'completed' || item.status === 'done';
+	const isDone = isFinished(item.status);
 	if (isDone) {
 		return { changes: { [item.statusField]: 'active', [item.doneField]: null }, nowDone: false };
 	}
@@ -1122,7 +1131,7 @@ function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay, editable, onCh
 		link.addEventListener('click', () => openItem(plugin, item));
 
 		if (canEdit) {
-			const isDone = item.status === 'completed' || item.status === 'done';
+			const isDone = isFinished(item.status);
 
 			const doneBtn = el('button', 'wgantt-row-btn wgantt-done-btn', label, isDone ? '↺' : '✓');
 			doneBtn.title = isDone
@@ -1163,7 +1172,7 @@ function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay, editable, onCh
 			bar.style.left = left + 'px';
 			bar.style.width = Math.max((daysBetween(item.spanStart, item.spanEnd) + 1) * pxPerDay, 3) + 'px';
 			bar.style.background = colour;
-			if (item.status === 'completed' || item.status === 'done') bar.classList.add('is-done');
+			if (isFinished(item.status)) bar.classList.add('is-done');
 			if (item.reversed) bar.classList.add('is-reversed');
 			if (parseFloat(bar.style.width) > 60) el('span', 'wgantt-bar-text', bar, item.title);
 		}

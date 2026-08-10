@@ -95,7 +95,7 @@ All options are `key: value`, one per line. Unknown keys are reported as errors 
 | `status-field` | Override the status field | `status` |
 | `show-today` | `true` / `false` | from settings |
 | `readonly` | `true` disables editing for this block | `false` |
-| `hide-finished` | `true` hides completed and done items | `false` |
+| `hide-finished` | `true` hides `completed`, `finished` and `done` items | `false` |
 
 Field names default to whatever is set in the plugin's settings tab, so if your vault uses `starts`/`ends` you set that once rather than per block.
 
@@ -157,7 +157,8 @@ Bar colours come from the note's `status`:
 | `proposed` | cyan |
 | `waiting` | orange |
 | `paused` | yellow |
-| `completed`, `archived` | muted grey, dimmed |
+| `completed`, `finished`, `done`, `archived` | muted grey, dimmed |
+| `review` | pink |
 | `cancelled` | red |
 | `reference`, `evergreen` | purple |
 | anything else | theme accent |

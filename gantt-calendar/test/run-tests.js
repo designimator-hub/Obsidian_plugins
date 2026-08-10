@@ -654,8 +654,41 @@ check('isFinished recognises the finished statuses only', () => {
 	ok(!T.isFinished('active'));
 	ok(!T.isFinished('proposed'));
 	ok(!T.isFinished('cancelled'), 'cancelled is not finished, it is abandoned');
+	ok(!T.isFinished('review'), 'review is work in progress');
 	ok(!T.isFinished(''));
 	ok(!T.isFinished(null));
+});
+
+check('isFinished accepts the word the toggle actually uses', () => {
+	// The control says "Hide finished", so a note marked Finished has to
+	// count. Leaving this out made the toggle lie about what it does.
+	ok(T.isFinished('finished'));
+	ok(T.isFinished('Finished'), 'as typed by hand in a note');
+	ok(T.isFinished('FINISHED'));
+});
+
+check('every finished status is offered in the editing dropdown', () => {
+	for (const st of T.FINISHED_STATUSES) {
+		if (st === 'done') continue; // synonym of completed, not offered twice
+		ok(T.STATUS_CHOICES.includes(st), `${st} is missing from STATUS_CHOICES`);
+	}
+});
+
+check('the done toggle understands every finished spelling', () => {
+	for (const st of ['completed', 'done', 'finished', 'Finished']) {
+		const r = T.doneToggleWrites({
+			status: st, statusField: 'status', doneField: 'completed_date',
+		}, '2026-07-31');
+		eq(r.nowDone, false, `${st} should be treated as already done:`);
+		eq(r.changes.status, 'active');
+	}
+});
+
+check('statuses in use have a distinct colour rather than the accent default', () => {
+	for (const st of ['review', 'finished', 'proposed', 'active']) {
+		ok(T.STATUS_COLORS[st], `${st} has no colour mapping`);
+	}
+	eq(T.STATUS_COLORS.finished, T.STATUS_COLORS.completed, 'finished should read as completed:');
 });
 
 check('hide-finished is off by default so everything shows together', () => {
