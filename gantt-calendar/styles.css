@@ -43,60 +43,83 @@
 }
 
 .wgantt-scalename {
-	margin-left: auto;
+	/* No auto margin: this now sits inside .wgantt-zoom, which does the pushing. */
 	text-transform: capitalize;
+	min-width: 56px;
+	text-align: center;
 	padding: 1px 8px;
 	border: 1px solid var(--wg-border);
 	border-radius: var(--wg-radius);
 }
 
-/* ---------- layout ---------- */
+/* ---------- layout ----------
+ *
+ * One scroll container, with a CSS grid inside it:
+ *
+ *     corner | head      <- sticky to the top
+ *     labels | canvas    <- labels sticky to the left
+ *
+ * Sticky positions resolve against that single scroller, so the header row
+ * and the label column stay frozen on both axes. An earlier version put the
+ * two axes in separate scrollers, which broke the sticky header whenever the
+ * chart was scrolled vertically.
+ */
 
 .wgantt-body {
-	display: flex;
-	align-items: flex-start;
-	border-top: 1px solid var(--wg-border);
+	position: relative;
+	overflow: auto;
 	max-height: 70vh;
-	overflow-y: auto;
+	border-top: 1px solid var(--wg-border);
+	outline: none;
+	overscroll-behavior-x: contain;
+}
+
+.wgantt-body:focus-visible {
+	box-shadow: inset 0 0 0 2px var(--interactive-accent, #888);
+}
+
+.wgantt-grid-wrap {
+	display: grid;
+	grid-template-rows: var(--wg-head-height) auto;
+	align-items: start;
+	min-width: min-content;
+}
+
+.wgantt-corner {
+	position: sticky;
+	top: 0;
+	left: 0;
+	z-index: 6;
+	height: var(--wg-head-height);
+	background: var(--background-secondary, var(--background-primary));
+	border-right: 1px solid var(--wg-border);
+	border-bottom: 1px solid var(--wg-border);
 }
 
 .wgantt-labels {
-	flex: 0 0 var(--wg-label-width);
-	width: var(--wg-label-width);
-	border-right: 1px solid var(--wg-border);
-	background: var(--background-secondary, transparent);
 	position: sticky;
 	left: 0;
 	z-index: 3;
-}
-
-.wgantt-labels-head {
-	height: var(--wg-head-height);
-	border-bottom: 1px solid var(--wg-border);
-	background: var(--background-secondary, transparent);
-	position: sticky;
-	top: 0;
-	z-index: 4;
-}
-
-.wgantt-scroll {
-	flex: 1 1 auto;
-	overflow-x: auto;
-	overflow-y: hidden;
+	border-right: 1px solid var(--wg-border);
+	background: var(--background-secondary, var(--background-primary));
 }
 
 .wgantt-canvas {
 	position: relative;
-	min-height: 100%;
+	z-index: 1;
+}
+
+.wgantt-canvas.is-panning {
+	cursor: grabbing;
 }
 
 /* ---------- axis ---------- */
 
 .wgantt-head {
-	height: var(--wg-head-height);
 	position: sticky;
 	top: 0;
-	z-index: 2;
+	z-index: 4;
+	height: var(--wg-head-height);
 	background: var(--background-secondary, var(--background-primary));
 	border-bottom: 1px solid var(--wg-border);
 }
@@ -147,7 +170,7 @@
 
 .wgantt-grid {
 	position: absolute;
-	top: var(--wg-head-height);
+	top: 0;
 	bottom: 0;
 	left: 0;
 	right: 0;
@@ -302,7 +325,7 @@
 
 .wgantt-today {
 	position: absolute;
-	top: var(--wg-head-height);
+	top: 0;
 	bottom: 0;
 	width: 2px;
 	margin-left: -1px;
@@ -351,13 +374,27 @@
 /* ---------- the view opened by the ribbon icon ---------- */
 
 .wgantt-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
 	padding: 0;
 }
 
 .wgantt-view .wgantt {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
 	border: none;
 	border-radius: 0;
 	margin: 0;
+}
+
+/* Fill the pane rather than stopping at 70vh. */
+.wgantt-view .wgantt-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: none;
 }
 
 .wgantt-controls {
@@ -430,9 +467,12 @@
 	border: 1px solid transparent;
 	border-radius: var(--radius-s, 4px);
 	cursor: pointer;
-	/* Revealed on row hover so the label column stays quiet at rest. */
-	opacity: 0;
-	transition: opacity 80ms ease-in-out;
+	/*
+	 * Always visible. An earlier version revealed these on row hover only,
+	 * which hid the two actions people reach for first.
+	 */
+	opacity: 0.55;
+	transition: opacity 80ms ease-in-out, background 80ms ease-in-out;
 }
 
 .wgantt-label:hover .wgantt-row-btn,
@@ -527,4 +567,58 @@
 	.wgantt-scroll {
 		overflow: visible;
 	}
+}
+
+/* ---------- toolbar extras ---------- */
+
+.wgantt-toolbar {
+	flex-wrap: wrap;
+}
+
+.wgantt-btn-cta {
+	background: var(--interactive-accent, #5b7cfa);
+	color: var(--text-on-accent, #fff);
+	border-color: transparent;
+	font-weight: var(--font-semibold, 600);
+}
+
+.wgantt-btn-cta:hover {
+	background: var(--interactive-accent-hover, var(--interactive-accent, #5b7cfa));
+	filter: brightness(1.08);
+}
+
+.wgantt-zoom {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+}
+
+.wgantt-btn-icon {
+	width: 24px;
+	padding: 2px 0;
+	text-align: center;
+	font-size: 14px;
+	line-height: 1;
+}
+
+.wgantt-btn-icon:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.wgantt-toolbar .wgantt-count {
+	color: var(--text-muted);
+}
+
+.wgantt-control-check {
+	flex-direction: row;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+	padding-bottom: 5px;
+}
+
+.wgantt-control-check input {
+	margin: 0;
 }

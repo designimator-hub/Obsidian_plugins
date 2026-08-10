@@ -602,6 +602,57 @@ check('newProjectContent omits optional keys when unset', () => {
 	ok(/^start_date:\s*$/m.test(fm), 'start_date should be present but blank');
 });
 
+/* ---------- finished filter and zoom ---------- */
+
+check('isFinished recognises the finished statuses only', () => {
+	ok(T.isFinished('completed'));
+	ok(T.isFinished('done'));
+	ok(T.isFinished('Completed'), 'should be case-insensitive');
+	ok(!T.isFinished('active'));
+	ok(!T.isFinished('proposed'));
+	ok(!T.isFinished('cancelled'), 'cancelled is not finished, it is abandoned');
+	ok(!T.isFinished(''));
+	ok(!T.isFinished(null));
+});
+
+check('hide-finished is off by default so everything shows together', () => {
+	eq(T.defaultConfig().hideFinished, false);
+	eq(T.DEFAULT_SETTINGS.viewHideFinished, false);
+});
+
+check('hide-finished option is parsed', () => {
+	eq(T.parseConfig('hide-finished: true').cfg.hideFinished, true);
+	eq(T.parseConfig('hide-finished: no').cfg.hideFinished, false);
+	eq(T.parseConfig('hide-finished: yes').errors, []);
+});
+
+check('the default view folder covers all project states', () => {
+	// 03_Projects/Active would hide Proposed and Completed, which is the
+	// opposite of showing everything on one chart.
+	eq(T.DEFAULT_SETTINGS.viewFolder, '03_Projects');
+});
+
+check('zoomScale steps through the scales in order', () => {
+	eq(T.zoomScale('month', 'in'), 'week');
+	eq(T.zoomScale('week', 'in'), 'day');
+	eq(T.zoomScale('week', 'out'), 'month');
+	eq(T.zoomScale('month', 'out'), 'quarter');
+});
+
+check('zoomScale stops at both ends rather than wrapping', () => {
+	eq(T.zoomScale('day', 'in'), 'day');
+	eq(T.zoomScale('quarter', 'out'), 'quarter');
+});
+
+check('zoomScale leaves an unknown scale alone', () => {
+	eq(T.zoomScale('fortnight', 'in'), 'fortnight');
+});
+
+check('every zoom step is a real scale', () => {
+	for (const name of T.SCALE_ORDER) ok(T.SCALES[name], `${name} is not a defined scale`);
+	eq(T.SCALE_ORDER.length, Object.keys(T.SCALES).length, 'zoom order must cover every scale:');
+});
+
 check('readonly option is parsed', () => {
 	eq(T.parseConfig('readonly: true').cfg.readonly, true);
 	eq(T.parseConfig('readonly: false').cfg.readonly, false);

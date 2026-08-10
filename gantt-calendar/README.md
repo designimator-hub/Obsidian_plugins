@@ -17,13 +17,15 @@ There is no build step. Copy the plugin folder into your vault:
 
 Then enable it in **Settings → Community plugins**.
 
-To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,600 lines, commented, and written in plain JavaScript rather than bundled output.
+To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,760 lines, commented, and written in plain JavaScript rather than bundled output.
 
 ## Usage
 
 Two ways in.
 
-**The ribbon icon.** A calendar icon appears in the left ribbon once the plugin is enabled. It opens a vault-wide Gantt as a full tab, with dropdowns for folder, scale, sort, and grouping. Your selections are remembered. The same thing is on the command palette as **Open Gantt calendar**.
+**The ribbon icon.** A calendar icon appears in the left ribbon once the plugin is enabled. It opens a Gantt as a full-width tab, with dropdowns for folder, scale, sort and grouping, and a **Hide finished** checkbox. Your selections are remembered. The same thing is on the command palette as **Open Gantt calendar**.
+
+Proposed, active and finished items all appear on one chart by default. Grouping by **Status** separates them into bands while keeping everything in view; **Hide finished** is the opt-out when completed work starts crowding the chart.
 
 **A code block**, for a chart embedded in a specific note:
 
@@ -57,6 +59,17 @@ There is also an **Insert Gantt block** command if you would rather not type the
 
 A field that exists but is blank does not count — `due_date:` with nothing after it is not a date. The empty state says which of these applies: nothing in scope, nothing with frontmatter, nothing with a date in the configured field, or everything removed by a filter. Read it rather than guessing.
 
+## Moving around the chart
+
+A long timeline in a narrow pane needs more than a scrollbar, so there are four ways to move:
+
+- **Drag any empty part of the chart** to pan in both directions. Dragging starts only from the background, so panning never competes with rescheduling a bar.
+- **Shift + mouse wheel** scrolls horizontally.
+- **Arrow keys** once the chart has focus; **Home** and **End** jump to the ends, and **Ctrl + Left/Right** moves a full screen at a time.
+- **Today** re-centres on the current date. The chart also opens centred there.
+
+The **− / +** buttons zoom between day, week, month and quarter. The header row and the label column stay frozen while you scroll, on both axes.
+
 ## Options
 
 All options are `key: value`, one per line. Unknown keys are reported as errors rather than ignored, so a typo never silently produces an empty chart.
@@ -82,6 +95,7 @@ All options are `key: value`, one per line. Unknown keys are reported as errors 
 | `status-field` | Override the status field | `status` |
 | `show-today` | `true` / `false` | from settings |
 | `readonly` | `true` disables editing for this block | `false` |
+| `hide-finished` | `true` hides completed and done items | `false` |
 
 Field names default to whatever is set in the plugin's settings tab, so if your vault uses `starts`/`ends` you set that once rather than per block.
 

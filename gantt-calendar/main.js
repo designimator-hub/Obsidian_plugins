@@ -53,9 +53,10 @@ const DEFAULT_SETTINGS = {
 	// Editing
 	allowEditing: true,
 	newProjectFolder: '03_Projects/Active',
+	viewHideFinished: false,
 	newProjectType: 'project',
 	// Remembered state for the sidebar view.
-	viewFolder: '',
+	viewFolder: '03_Projects',
 	viewScale: 'month',
 	viewGroup: '',
 	viewSort: 'start',
@@ -66,6 +67,24 @@ const STATUS_CHOICES = [
 	'active', 'proposed', 'planned', 'waiting', 'paused',
 	'completed', 'cancelled', 'reference', 'evergreen',
 ];
+
+/* Statuses that count as finished for the "hide finished" toggle. */
+const FINISHED_STATUSES = ['completed', 'done'];
+
+function isFinished(status) {
+	return FINISHED_STATUSES.includes(String(status || '').toLowerCase());
+}
+
+/* Zoom steps, coarsest last. */
+const SCALE_ORDER = ['day', 'week', 'month', 'quarter'];
+
+function zoomScale(current, direction) {
+	const i = SCALE_ORDER.indexOf(current);
+	if (i === -1) return current;
+	const next = i + (direction === 'in' ? -1 : 1);
+	if (next < 0 || next >= SCALE_ORDER.length) return current;
+	return SCALE_ORDER[next];
+}
 
 /* Scale definitions. pxPerDay drives every horizontal measurement. */
 const SCALES = {
@@ -188,7 +207,7 @@ const KNOWN_KEYS = new Set([
 	'title', 'folder', 'file', 'tag', 'status', 'exclude-status', 'source',
 	'scale', 'from', 'to', 'group', 'sort', 'reverse', 'limit',
 	'start-field', 'end-field', 'done-field', 'status-field',
-	'show-today', 'readonly',
+	'show-today', 'readonly', 'hide-finished',
 ]);
 
 function defaultConfig() {
@@ -213,6 +232,7 @@ function defaultConfig() {
 		statusField: null,
 		showToday: null,
 		readonly: false,
+		hideFinished: false,
 	};
 }
 
@@ -252,6 +272,7 @@ function parseConfig(source) {
 			case 'sort': cfg.sort = value.toLowerCase(); break;
 			case 'reverse': cfg.reverse = /^(true|yes|1)$/i.test(value); break;
 			case 'readonly': cfg.readonly = !/^(false|no|0)$/i.test(value); break;
+			case 'hide-finished': cfg.hideFinished = !/^(false|no|0)$/i.test(value); break;
 			case 'show-today': cfg.showToday = !/^(false|no|0)$/i.test(value); break;
 			case 'start-field': cfg.startField = value; break;
 			case 'end-field': cfg.endField = value; break;
@@ -352,7 +373,7 @@ function collectFromNotes(app, cfg, s, sourcePath) {
 	const items = [];
 	const stats = {
 		scanned: 0, inScope: 0, withFrontmatter: 0,
-		withDates: 0, filteredOut: 0,
+		withDates: 0, filteredOut: 0, finishedHidden: 0,
 		startField, endField,
 	};
 
@@ -373,6 +394,7 @@ function collectFromNotes(app, cfg, s, sourcePath) {
 		stats.withDates++;
 
 		const status = fm[statusField] != null ? String(fm[statusField]).toLowerCase() : '';
+		if (cfg.hideFinished && isFinished(status)) { stats.finishedHidden++; continue; }
 		if (cfg.status.length && !cfg.status.includes(status)) { stats.filteredOut++; continue; }
 		if (cfg.excludeStatus.length && cfg.excludeStatus.includes(status)) { stats.filteredOut++; continue; }
 
@@ -470,6 +492,7 @@ async function collectFromTasks(app, cfg, sourcePath) {
 				.trim();
 
 			const status = CHECKBOX_STATUS[mark] || 'active';
+			if (cfg.hideFinished && isFinished(status)) continue;
 			if (cfg.status.length && !cfg.status.includes(status)) continue;
 			if (cfg.excludeStatus.length && cfg.excludeStatus.includes(status)) continue;
 
@@ -738,6 +761,10 @@ function explainEmpty(box, cfg, stats, s) {
 		el('p', null, why, 'A field that exists but is empty does not count. It needs a date:');
 		const pre = el('pre', 'wgantt-empty-code', why);
 		el('code', null, pre, `---\n${startField}: 2026-09-03\n${endField}: 2026-12-19\n---`);
+	} else if (stats.finishedHidden > 0 && stats.filteredOut === 0) {
+		el('p', null, why,
+			`${stats.finishedHidden} note(s) had dates but are finished, and ` +
+			'"Hide finished" is on.');
 	} else if (stats.filteredOut > 0) {
 		el('p', null, why,
 			`${stats.withDates} note(s) had dates, but all were removed by the ` +
@@ -751,7 +778,7 @@ function explainEmpty(box, cfg, stats, s) {
  * The chart builder - shared by the code block and the view
  * ------------------------------------------------------------------ */
 
-async function buildChart(root, plugin, cfg, sourcePath, onChange) {
+async function buildChart(root, plugin, cfg, sourcePath, onChange, onScaleChange) {
 	root.textContent = '';
 
 	const s = plugin.settings;
@@ -817,29 +844,31 @@ async function buildChart(root, plugin, cfg, sourcePath, onChange) {
 	const canvasWidth = Math.max(totalDays * pxPerDay, 200);
 	const x = (d) => daysBetween(rangeStart, d) * pxPerDay;
 
+	// Toolbar is created first so it sits at the top, but its buttons are
+	// wired after the scroller exists below.
 	const info = el('div', 'wgantt-toolbar', root);
-	el('span', 'wgantt-count', info, `${items.length} item${items.length === 1 ? '' : 's'}`);
 
-	if (editable) {
-		const b = el('button', 'wgantt-btn wgantt-btn-small', info, '+ New project');
-		b.title = 'Create a new project note and put it on the chart';
-		b.addEventListener('click', () => new NewProjectModal(plugin.app, plugin, refresh).open());
-	}
-
-	el('span', 'wgantt-scalename', info, scaleName);
-
+	/*
+	 * One scroll container for both axes. The header row and the label
+	 * column are sticky inside it, so they stay put while the timeline
+	 * moves under them. An earlier version scrolled the two axes in
+	 * separate elements, which broke the sticky header on vertical scroll.
+	 */
 	const body = el('div', 'wgantt-body', root);
 	body.style.setProperty('--wg-label-width', s.labelWidth + 'px');
 	body.style.setProperty('--wg-row-height', s.rowHeight + 'px');
 	body.style.setProperty('--wg-bar-height', s.barHeight + 'px');
+	body.tabIndex = 0; // so arrow keys and Home/End reach it
 
-	const labels = el('div', 'wgantt-labels', body);
-	const scroll = el('div', 'wgantt-scroll', body);
-	const canvas = el('div', 'wgantt-canvas', scroll);
-	canvas.style.width = canvasWidth + 'px';
+	const wrap = el('div', 'wgantt-grid-wrap', body);
+	wrap.style.gridTemplateColumns = `var(--wg-label-width) ${canvasWidth}px`;
 
-	el('div', 'wgantt-labels-head', labels);
-	buildAxis(canvas, scale, rangeStart, rangeEnd, x, s.weekStart);
+	el('div', 'wgantt-corner', wrap);
+	const head = el('div', 'wgantt-head', wrap);
+	const labels = el('div', 'wgantt-labels', wrap);
+	const canvas = el('div', 'wgantt-canvas', wrap);
+
+	buildAxis(head, scale, rangeStart, rangeEnd, x, s.weekStart);
 
 	const grid = el('div', 'wgantt-grid', canvas);
 	const rows = el('div', 'wgantt-rows', canvas);
@@ -854,19 +883,116 @@ async function buildChart(root, plugin, cfg, sourcePath, onChange) {
 
 	const showToday = cfg.showToday == null ? s.showToday : cfg.showToday;
 	const t = today();
-	if (showToday && t >= rangeStart && t <= rangeEnd) {
+	const todayVisible = t >= rangeStart && t <= rangeEnd;
+	if (showToday && todayVisible) {
 		const line = el('div', 'wgantt-today', canvas);
 		line.style.left = x(t) + 'px';
 		line.title = 'Today - ' + isoDate(t);
 	}
 
-	if (t >= rangeStart && t <= rangeEnd) {
-		window.setTimeout(() => {
-			scroll.scrollLeft = Math.max(0, x(t) - scroll.clientWidth / 2);
-		}, 0);
+	const centreOn = (date) => {
+		body.scrollLeft = Math.max(0, x(date) - body.clientWidth / 2 + s.labelWidth / 2);
+	};
+
+	attachPanning(body, canvas);
+
+	/* ---- toolbar ---- */
+
+	if (editable) {
+		const b = el('button', 'wgantt-btn wgantt-btn-cta', info, '+ New project');
+		b.title = 'Create a new project note and put it on the chart';
+		b.addEventListener('click', () => new NewProjectModal(plugin.app, plugin, refresh).open());
 	}
 
+	if (todayVisible) {
+		const b = el('button', 'wgantt-btn wgantt-btn-small', info, 'Today');
+		b.title = 'Scroll the timeline back to today';
+		b.addEventListener('click', () => centreOn(t));
+	}
+
+	const zoom = el('div', 'wgantt-zoom', info);
+	const zoomOut = el('button', 'wgantt-btn wgantt-btn-icon', zoom, '−');
+	zoomOut.title = 'Zoom out - show a longer span';
+	zoomOut.disabled = scaleName === SCALE_ORDER[SCALE_ORDER.length - 1];
+	zoomOut.addEventListener('click', () => onScaleChange && onScaleChange(zoomScale(scaleName, 'out')));
+
+	el('span', 'wgantt-scalename', zoom, scaleName);
+
+	const zoomIn = el('button', 'wgantt-btn wgantt-btn-icon', zoom, '+');
+	zoomIn.title = 'Zoom in - show more detail';
+	zoomIn.disabled = scaleName === SCALE_ORDER[0];
+	zoomIn.addEventListener('click', () => onScaleChange && onScaleChange(zoomScale(scaleName, 'in')));
+
+	el('span', 'wgantt-count', info, `${items.length} item${items.length === 1 ? '' : 's'}`);
+
+	if (todayVisible) window.setTimeout(() => centreOn(t), 0);
+
 	return items.length;
+}
+
+/*
+ * Scrolling around the chart.
+ *
+ * Three ways to move, because a wide timeline in a narrow pane is
+ * genuinely awkward with a scrollbar alone:
+ *   - drag any empty part of the chart to pan in both directions
+ *   - shift + wheel scrolls horizontally
+ *   - arrow keys, Home and End, when the chart has focus
+ *
+ * Dragging is only started from the background. Bars keep their own drag
+ * behaviour, so panning never fights rescheduling.
+ */
+function attachPanning(scroller, canvas) {
+	const isBackground = (target) =>
+		target === canvas ||
+		target.classList.contains('wgantt-grid') ||
+		target.classList.contains('wgantt-gridline') ||
+		target.classList.contains('wgantt-rows') ||
+		target.classList.contains('wgantt-row');
+
+	canvas.addEventListener('mousedown', (ev) => {
+		if (ev.button !== 0 || !isBackground(ev.target)) return;
+		ev.preventDefault();
+
+		const startX = ev.clientX;
+		const startY = ev.clientY;
+		const startLeft = scroller.scrollLeft;
+		const startTop = scroller.scrollTop;
+		canvas.classList.add('is-panning');
+
+		const onMove = (e) => {
+			scroller.scrollLeft = startLeft - (e.clientX - startX);
+			scroller.scrollTop = startTop - (e.clientY - startY);
+		};
+		const onUp = () => {
+			document.removeEventListener('mousemove', onMove);
+			document.removeEventListener('mouseup', onUp);
+			canvas.classList.remove('is-panning');
+		};
+		document.addEventListener('mousemove', onMove);
+		document.addEventListener('mouseup', onUp);
+	});
+
+	scroller.addEventListener('wheel', (ev) => {
+		if (!ev.shiftKey) return;
+		const delta = ev.deltaY || ev.deltaX;
+		if (!delta) return;
+		ev.preventDefault();
+		scroller.scrollLeft += delta;
+	}, { passive: false });
+
+	scroller.addEventListener('keydown', (ev) => {
+		const step = ev.ctrlKey ? scroller.clientWidth : 80;
+		let handled = true;
+		if (ev.key === 'ArrowRight') scroller.scrollLeft += step;
+		else if (ev.key === 'ArrowLeft') scroller.scrollLeft -= step;
+		else if (ev.key === 'ArrowDown') scroller.scrollTop += 60;
+		else if (ev.key === 'ArrowUp') scroller.scrollTop -= 60;
+		else if (ev.key === 'Home') scroller.scrollLeft = 0;
+		else if (ev.key === 'End') scroller.scrollLeft = scroller.scrollWidth;
+		else handled = false;
+		if (handled) ev.preventDefault();
+	});
 }
 
 function buildAxis(canvas, scale, rangeStart, rangeEnd, x, weekStart) {
@@ -1301,7 +1427,12 @@ class GanttBlock extends MarkdownRenderChild {
 			for (const e of errors) el('li', null, ul, e);
 			return;
 		}
-		await buildChart(root, this.plugin, cfg, this.sourcePath, () => this.render());
+		if (this.scaleOverride) cfg.scale = this.scaleOverride;
+		await buildChart(
+			root, this.plugin, cfg, this.sourcePath,
+			() => this.render(),
+			(scale) => { this.scaleOverride = scale; this.render(); }
+		);
 	}
 }
 
@@ -1327,6 +1458,7 @@ class GanttView extends ItemView {
 		this.cfg.scale = s.viewScale;
 		this.cfg.group = s.viewGroup;
 		this.cfg.sort = s.viewSort;
+		this.cfg.hideFinished = s.viewHideFinished;
 
 		const container = this.contentEl;
 		container.empty();
@@ -1386,13 +1518,28 @@ class GanttView extends ItemView {
 				this.refresh();
 			});
 
-		this.select(c, 'Group', [['', 'None'], ['folder', 'Folder'], ['company', 'Company'], ['type', 'Type'], ['status', 'Status']],
+		this.select(c, 'Group', [['', 'None'], ['status', 'Status'], ['folder', 'Folder'], ['company', 'Company'], ['type', 'Type']],
 			this.cfg.group, async (v) => {
 				this.cfg.group = v;
 				this.plugin.settings.viewGroup = v;
 				await this.plugin.saveSettings();
 				this.refresh();
 			});
+
+		// Everything is shown by default - proposed, active and finished
+		// together - so this is an opt-out rather than a filter to discover.
+		const toggle = el('label', 'wgantt-control wgantt-control-check', c);
+		const cb = el('input', null, toggle);
+		cb.type = 'checkbox';
+		cb.checked = this.cfg.hideFinished;
+		el('span', 'wgantt-control-label', toggle, 'Hide finished');
+		toggle.title = 'Hide notes whose status is completed or done';
+		cb.addEventListener('change', async () => {
+			this.cfg.hideFinished = cb.checked;
+			this.plugin.settings.viewHideFinished = cb.checked;
+			await this.plugin.saveSettings();
+			this.refresh();
+		});
 
 		const btn = el('button', 'wgantt-btn', c, 'Refresh');
 		btn.addEventListener('click', () => this.refresh());
@@ -1412,7 +1559,17 @@ class GanttView extends ItemView {
 	}
 
 	async refresh() {
-		await buildChart(this.chartEl, this.plugin, this.cfg, null, () => this.refresh());
+		await buildChart(
+			this.chartEl, this.plugin, this.cfg, null,
+			() => this.refresh(),
+			async (scale) => {
+				this.cfg.scale = scale;
+				this.plugin.settings.viewScale = scale;
+				await this.plugin.saveSettings();
+				this.buildControls();
+				this.refresh();
+			}
+		);
 	}
 }
 
@@ -1601,6 +1758,7 @@ module.exports.__test = {
 	parseConfig, defaultConfig, normaliseSpans, sortItems, stepStarts,
 	matchesTag, inScope, tickLabel, majorLabel,
 	shiftSpan, dragWrites, doneToggleWrites, safeFileName, newProjectContent,
+	isFinished, zoomScale, SCALE_ORDER, FINISHED_STATUSES,
 	SCALES, STATUS_COLORS, STATUS_CHOICES, DEFAULT_SETTINGS,
 	VIEW_TYPE_GANTT, RIBBON_ICON,
 };
