@@ -10,8 +10,16 @@
  *     XMLHttpRequest, WebSocket, or dynamic code execution anywhere below.
  *     Search this file for those words; you will not find them outside
  *     this comment.
- *   - No writes to your vault. The plugin reads notes and renders. The only
- *     thing it ever writes is its own settings file.
+ *
+ * On writing to your vault:
+ *   This plugin DOES modify notes, and only in these three ways:
+ *     1. creating a new note when you use "New project"
+ *     2. setting start_date / due_date when you drag a bar or edit dates
+ *     3. setting status and completed_date when you use the done toggle
+ *   All frontmatter edits go through app.fileManager.processFrontMatter,
+ *   which rewrites only the YAML block and leaves note bodies untouched.
+ *   Nothing is ever deleted. Set "Allow editing" off in settings, or put
+ *   readonly: true in a block, to make the plugin read-only again.
  *
  * Two ways in:
  *   - a ```gantt code block in any note
@@ -20,7 +28,7 @@
  */
 
 const {
-	Plugin, PluginSettingTab, Setting, MarkdownRenderChild, ItemView, Notice,
+	Plugin, PluginSettingTab, Setting, MarkdownRenderChild, ItemView, Modal, Notice,
 } = require('obsidian');
 
 const VIEW_TYPE_GANTT = 'wright-gantt-view';
@@ -42,12 +50,22 @@ const DEFAULT_SETTINGS = {
 	barHeight: 18,
 	showToday: true,
 	openInNewPane: false,
+	// Editing
+	allowEditing: true,
+	newProjectFolder: '03_Projects/Active',
+	newProjectType: 'project',
 	// Remembered state for the sidebar view.
 	viewFolder: '',
 	viewScale: 'month',
 	viewGroup: '',
 	viewSort: 'start',
 };
+
+/* Statuses offered in the editing controls. */
+const STATUS_CHOICES = [
+	'active', 'proposed', 'planned', 'waiting', 'paused',
+	'completed', 'cancelled', 'reference', 'evergreen',
+];
 
 /* Scale definitions. pxPerDay drives every horizontal measurement. */
 const SCALES = {
@@ -170,7 +188,7 @@ const KNOWN_KEYS = new Set([
 	'title', 'folder', 'file', 'tag', 'status', 'exclude-status', 'source',
 	'scale', 'from', 'to', 'group', 'sort', 'reverse', 'limit',
 	'start-field', 'end-field', 'done-field', 'status-field',
-	'show-today',
+	'show-today', 'readonly',
 ]);
 
 function defaultConfig() {
@@ -194,6 +212,7 @@ function defaultConfig() {
 		doneField: null,
 		statusField: null,
 		showToday: null,
+		readonly: false,
 	};
 }
 
@@ -232,6 +251,7 @@ function parseConfig(source) {
 			case 'group': cfg.group = value; break;
 			case 'sort': cfg.sort = value.toLowerCase(); break;
 			case 'reverse': cfg.reverse = /^(true|yes|1)$/i.test(value); break;
+			case 'readonly': cfg.readonly = !/^(false|no|0)$/i.test(value); break;
 			case 'show-today': cfg.showToday = !/^(false|no|0)$/i.test(value); break;
 			case 'start-field': cfg.startField = value; break;
 			case 'end-field': cfg.endField = value; break;
@@ -368,6 +388,11 @@ function collectFromNotes(app, cfg, s, sourcePath) {
 			start, end, done, status, group,
 			path: file.path,
 			line: null,
+			// Which fields actually exist decides what a drag writes back.
+			hasStart: !!start,
+			hasEnd: !!end,
+			startField, endField, doneField, statusField,
+			editable: true,
 		});
 	}
 	return { items, stats };
@@ -454,6 +479,11 @@ async function collectFromTasks(app, cfg, sourcePath) {
 				group: cfg.group === 'folder' ? (file.parent ? file.parent.path : '/') : (cfg.group ? file.basename : ''),
 				path: file.path,
 				line: lineNo,
+				hasStart: !!start,
+				hasEnd: !!end,
+				// Editing a task line means rewriting inline markup rather than
+				// YAML. Not attempted; open the note instead.
+				editable: false,
 			});
 		}
 	}
@@ -500,6 +530,147 @@ function sortItems(items, cfg) {
 		return r * dir;
 	});
 	return items;
+}
+
+/* ------------------------------------------------------------------ *
+ * Editing - pure logic
+ * ------------------------------------------------------------------ */
+
+/*
+ * Work out the new span after a drag.
+ *   mode 'move'  - shift both ends
+ *   mode 'start' - move the left edge, never past the right
+ *   mode 'end'   - move the right edge, never before the left
+ * Returns fresh Date objects; the inputs are not mutated.
+ */
+function shiftSpan(mode, start, end, dayDelta) {
+	let s = new Date(start.getTime());
+	let e = new Date(end.getTime());
+
+	if (mode === 'move') {
+		s = addDays(s, dayDelta);
+		e = addDays(e, dayDelta);
+	} else if (mode === 'start') {
+		s = addDays(s, dayDelta);
+		if (s > e) s = new Date(e.getTime());
+	} else if (mode === 'end') {
+		e = addDays(e, dayDelta);
+		if (e < s) e = new Date(s.getTime());
+	}
+	return { start: s, end: e };
+}
+
+/*
+ * Decide which frontmatter keys a drag should write.
+ * A milestone with only a due date must not silently gain a start date.
+ */
+function dragWrites(item, mode, span) {
+	const out = {};
+	const bothPresent = item.hasStart && item.hasEnd;
+
+	if (mode === 'move') {
+		if (bothPresent) {
+			out[item.startField] = isoDate(span.start);
+			out[item.endField] = isoDate(span.end);
+		} else if (item.hasStart) {
+			out[item.startField] = isoDate(span.start);
+		} else {
+			out[item.endField] = isoDate(span.end);
+		}
+	} else if (mode === 'start') {
+		out[item.startField] = isoDate(span.start);
+	} else if (mode === 'end') {
+		out[item.endField] = isoDate(span.end);
+	}
+	return out;
+}
+
+/* Which way the done toggle goes, and what it writes. */
+function doneToggleWrites(item, todayIso) {
+	const isDone = item.status === 'completed' || item.status === 'done';
+	if (isDone) {
+		return { changes: { [item.statusField]: 'active', [item.doneField]: null }, nowDone: false };
+	}
+	return { changes: { [item.statusField]: 'completed', [item.doneField]: todayIso }, nowDone: true };
+}
+
+/* Turn a title into a filename that Obsidian will accept. */
+function safeFileName(title) {
+	return String(title)
+		.replace(/[\\/:*?"<>|#^[\]]/g, '-')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/^\.+/, '')
+		.slice(0, 120);
+}
+
+function newProjectContent(data) {
+	const lines = [
+		'---',
+		'type: ' + (data.type || 'project'),
+		'status: ' + (data.status || 'proposed'),
+		'importance: medium',
+		'created: ' + data.todayIso,
+		'updated: ' + data.todayIso,
+	];
+	if (data.owner) lines.push('owner: ' + data.owner);
+	if (data.company) lines.push('company: ' + data.company);
+	lines.push('start_date: ' + (data.start || ''));
+	lines.push('due_date: ' + (data.due || ''));
+	lines.push('completed_date:');
+	lines.push('people: []');
+	lines.push('domains: []');
+	lines.push('tags:');
+	lines.push('  - project');
+	lines.push('---');
+	lines.push('');
+	lines.push('# ' + data.title);
+	lines.push('');
+	lines.push('## Outcome');
+	lines.push('');
+	lines.push(data.outcome || 'State the finished result in one or two sentences.');
+	lines.push('');
+	lines.push('## Next actions');
+	lines.push('');
+	lines.push('- [ ] ');
+	lines.push('');
+	return lines.join('\n');
+}
+
+/* ------------------------------------------------------------------ *
+ * Editing - vault writes
+ *
+ * processFrontMatter rewrites only the YAML block. Note bodies are never
+ * touched, and nothing is ever deleted.
+ * ------------------------------------------------------------------ */
+
+async function applyFrontmatter(app, path, changes) {
+	const file = app.vault.getAbstractFileByPath(path);
+	if (!file) throw new Error('Note not found: ' + path);
+
+	await app.fileManager.processFrontMatter(file, (fm) => {
+		for (const key of Object.keys(changes)) {
+			const value = changes[key];
+			if (value === null) delete fm[key];
+			else fm[key] = value;
+		}
+		fm.updated = isoDate(today());
+	});
+}
+
+async function createProjectNote(app, data) {
+	const folder = String(data.folder || '').replace(/^\/+|\/+$/g, '');
+	const name = safeFileName(data.title);
+	if (!name) throw new Error('The project needs a name.');
+
+	const path = (folder ? folder + '/' : '') + name + '.md';
+	if (app.vault.getAbstractFileByPath(path)) {
+		throw new Error('A note already exists at ' + path);
+	}
+	if (folder && !app.vault.getAbstractFileByPath(folder)) {
+		await app.vault.createFolder(folder);
+	}
+	return app.vault.create(path, newProjectContent(data));
 }
 
 /* ------------------------------------------------------------------ *
@@ -580,10 +751,12 @@ function explainEmpty(box, cfg, stats, s) {
  * The chart builder - shared by the code block and the view
  * ------------------------------------------------------------------ */
 
-async function buildChart(root, plugin, cfg, sourcePath) {
+async function buildChart(root, plugin, cfg, sourcePath, onChange) {
 	root.textContent = '';
 
 	const s = plugin.settings;
+	const editable = s.allowEditing && !cfg.readonly;
+	const refresh = onChange || (() => {});
 	const scaleName = cfg.scale || s.defaultScale;
 	const scale = SCALES[scaleName] || SCALES.week;
 
@@ -623,7 +796,12 @@ async function buildChart(root, plugin, cfg, sourcePath) {
 	if (cfg.title) el('div', 'wgantt-title', root, cfg.title);
 
 	if (!items.length) {
-		explainEmpty(el('div', 'wgantt-empty', root), cfg, stats, s);
+		const box = el('div', 'wgantt-empty', root);
+		explainEmpty(box, cfg, stats, s);
+		if (editable) {
+			const b = el('button', 'wgantt-btn', box, '+ New project');
+			b.addEventListener('click', () => new NewProjectModal(plugin.app, plugin, refresh).open());
+		}
 		return 0;
 	}
 
@@ -641,6 +819,13 @@ async function buildChart(root, plugin, cfg, sourcePath) {
 
 	const info = el('div', 'wgantt-toolbar', root);
 	el('span', 'wgantt-count', info, `${items.length} item${items.length === 1 ? '' : 's'}`);
+
+	if (editable) {
+		const b = el('button', 'wgantt-btn wgantt-btn-small', info, '+ New project');
+		b.title = 'Create a new project note and put it on the chart';
+		b.addEventListener('click', () => new NewProjectModal(plugin.app, plugin, refresh).open());
+	}
+
 	el('span', 'wgantt-scalename', info, scaleName);
 
 	const body = el('div', 'wgantt-body', root);
@@ -665,7 +850,7 @@ async function buildChart(root, plugin, cfg, sourcePath) {
 		line.style.left = x(t) + 'px';
 	}
 
-	buildRows(plugin, labels, rows, items, cfg, x, pxPerDay);
+	buildRows(plugin, labels, rows, items, cfg, x, pxPerDay, editable, refresh);
 
 	const showToday = cfg.showToday == null ? s.showToday : cfg.showToday;
 	const t = today();
@@ -730,7 +915,7 @@ function openItem(plugin, item) {
 	}).catch(() => { /* file may have been removed since render */ });
 }
 
-function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay) {
+function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay, editable, onChange) {
 	let lastGroup = null;
 
 	for (const item of items) {
@@ -743,15 +928,46 @@ function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay) {
 			}
 		}
 
+		const canEdit = editable && item.editable;
+
 		const label = el('div', 'wgantt-label', labels);
-		const link = el('span', 'wgantt-label-text', label, item.title);
-		link.title = item.path + (item.line != null ? `:${item.line + 1}` : '');
-		label.addEventListener('click', () => openItem(plugin, item));
 
 		if (item.status) {
 			const dot = el('span', 'wgantt-dot', label);
 			dot.style.background = STATUS_COLORS[item.status] || 'var(--interactive-accent)';
 			dot.title = item.status;
+		}
+
+		const link = el('span', 'wgantt-label-text', label, item.title);
+		link.title = item.path + (item.line != null ? `:${item.line + 1}` : '');
+		link.addEventListener('click', () => openItem(plugin, item));
+
+		if (canEdit) {
+			const isDone = item.status === 'completed' || item.status === 'done';
+
+			const doneBtn = el('button', 'wgantt-row-btn wgantt-done-btn', label, isDone ? '↺' : '✓');
+			doneBtn.title = isDone
+				? 'Reopen - set status back to active and clear the completion date'
+				: 'Done - set status to completed and stamp today as the completion date';
+			if (isDone) doneBtn.classList.add('is-done');
+			doneBtn.addEventListener('click', async (ev) => {
+				ev.stopPropagation();
+				const { changes, nowDone } = doneToggleWrites(item, isoDate(today()));
+				try {
+					await applyFrontmatter(plugin.app, item.path, changes);
+					new Notice(`${item.title} - ${nowDone ? 'marked done' : 'reopened'}`);
+					if (onChange) onChange();
+				} catch (e) {
+					new Notice('Could not update: ' + (e && e.message ? e.message : e));
+				}
+			});
+
+			const editBtn = el('button', 'wgantt-row-btn', label, '✎');
+			editBtn.title = 'Edit dates and status';
+			editBtn.addEventListener('click', (ev) => {
+				ev.stopPropagation();
+				new EditDatesModal(plugin.app, item, onChange).open();
+			});
 		}
 
 		const row = el('div', 'wgantt-row', rows);
@@ -777,9 +993,268 @@ function buildRows(plugin, labels, rows, items, cfg, x, pxPerDay) {
 			? isoDate(item.spanStart)
 			: `${isoDate(item.spanStart)} to ${isoDate(item.spanEnd)}`;
 		bar.title = `${item.title}\n${span}${item.status ? '\n' + item.status : ''}` +
-			(item.reversed ? '\n(dates were reversed in the note)' : '');
-		bar.addEventListener('click', () => openItem(plugin, item));
+			(item.reversed ? '\n(dates were reversed in the note)' : '') +
+			(canEdit ? '\n\nDrag to move. Drag an edge to resize.' : '');
+
+		if (canEdit) {
+			bar.classList.add('is-editable');
+			attachDrag(plugin, bar, item, pxPerDay, onChange);
+		} else {
+			bar.addEventListener('click', () => openItem(plugin, item));
+		}
 	}
+}
+
+/*
+ * Drag a bar to reschedule.
+ *
+ * The gesture is previewed by moving the element, and only written to the
+ * note on release. A gesture that moves less than DRAG_THRESHOLD pixels is
+ * treated as a click, so clicking a bar still opens the note.
+ */
+const DRAG_THRESHOLD = 4;
+const EDGE_ZONE = 7;
+
+function attachDrag(plugin, bar, item, pxPerDay, onChange) {
+	const isMilestone = item.milestone;
+
+	if (!isMilestone) {
+		bar.addEventListener('mousemove', (ev) => {
+			if (bar.dataset.dragging === '1') return;
+			const rect = bar.getBoundingClientRect();
+			const offset = ev.clientX - rect.left;
+			if (offset < EDGE_ZONE || offset > rect.width - EDGE_ZONE) bar.style.cursor = 'ew-resize';
+			else bar.style.cursor = 'grab';
+		});
+	}
+
+	bar.addEventListener('mousedown', (ev) => {
+		if (ev.button !== 0) return;
+		ev.preventDefault();
+
+		const rect = bar.getBoundingClientRect();
+		const offset = ev.clientX - rect.left;
+
+		let mode = 'move';
+		if (!isMilestone) {
+			if (offset < EDGE_ZONE) mode = 'start';
+			else if (offset > rect.width - EDGE_ZONE) mode = 'end';
+		}
+
+		const startX = ev.clientX;
+		const originalLeft = parseFloat(bar.style.left) || 0;
+		const originalWidth = parseFloat(bar.style.width) || 0;
+		let moved = false;
+		let dayDelta = 0;
+
+		bar.dataset.dragging = '1';
+		bar.classList.add('is-dragging');
+		document.body.style.cursor = mode === 'move' ? 'grabbing' : 'ew-resize';
+
+		const onMove = (e) => {
+			const dx = e.clientX - startX;
+			if (Math.abs(dx) > DRAG_THRESHOLD) moved = true;
+			dayDelta = Math.round(dx / pxPerDay);
+			const snapped = dayDelta * pxPerDay;
+
+			if (mode === 'move') {
+				bar.style.left = (originalLeft + snapped) + 'px';
+			} else if (mode === 'start') {
+				const w = Math.max(originalWidth - snapped, pxPerDay);
+				bar.style.left = (originalLeft + (originalWidth - w)) + 'px';
+				bar.style.width = w + 'px';
+			} else {
+				bar.style.width = Math.max(originalWidth + snapped, pxPerDay) + 'px';
+			}
+		};
+
+		const onUp = async () => {
+			document.removeEventListener('mousemove', onMove);
+			document.removeEventListener('mouseup', onUp);
+			document.body.style.cursor = '';
+			bar.dataset.dragging = '0';
+			bar.classList.remove('is-dragging');
+
+			if (!moved) {
+				// Restore, then treat as a plain click.
+				bar.style.left = originalLeft + 'px';
+				if (originalWidth) bar.style.width = originalWidth + 'px';
+				openItem(plugin, item);
+				return;
+			}
+			if (dayDelta === 0) {
+				bar.style.left = originalLeft + 'px';
+				if (originalWidth) bar.style.width = originalWidth + 'px';
+				return;
+			}
+
+			const span = shiftSpan(mode, item.spanStart, item.spanEnd, dayDelta);
+			const changes = dragWrites(item, mode, span);
+
+			try {
+				await applyFrontmatter(plugin.app, item.path, changes);
+				const parts = Object.keys(changes).map((k) => `${k} ${changes[k]}`);
+				new Notice(`${item.title} - ${parts.join(', ')}`);
+				if (onChange) onChange();
+			} catch (e) {
+				bar.style.left = originalLeft + 'px';
+				if (originalWidth) bar.style.width = originalWidth + 'px';
+				new Notice('Could not update: ' + (e && e.message ? e.message : e));
+			}
+		};
+
+		document.addEventListener('mousemove', onMove);
+		document.addEventListener('mouseup', onUp);
+	});
+}
+
+/* ------------------------------------------------------------------ *
+ * Modals
+ * ------------------------------------------------------------------ */
+
+class NewProjectModal extends Modal {
+	constructor(app, plugin, onDone) {
+		super(app);
+		this.plugin = plugin;
+		this.onDone = onDone;
+		const t = isoDate(today());
+		this.data = {
+			title: '',
+			folder: plugin.settings.newProjectFolder,
+			type: plugin.settings.newProjectType,
+			status: 'proposed',
+			start: t,
+			due: isoDate(addDays(today(), 30)),
+			owner: '',
+			company: '',
+			outcome: '',
+			todayIso: t,
+		};
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('wgantt-modal');
+		contentEl.createEl('h3', { text: 'New project' });
+
+		const bind = (key) => async (v) => { this.data[key] = v.trim(); };
+
+		new Setting(contentEl).setName('Name').setDesc('Becomes the note filename.')
+			.addText((t) => t.setPlaceholder('Shinagawa 3F Fit-out').onChange(bind('title')));
+
+		new Setting(contentEl).setName('Folder')
+			.addText((t) => t.setValue(this.data.folder).onChange(bind('folder')));
+
+		new Setting(contentEl).setName('Status')
+			.addDropdown((d) => {
+				for (const s of STATUS_CHOICES) d.addOption(s, s);
+				d.setValue(this.data.status).onChange((v) => { this.data.status = v; });
+			});
+
+		new Setting(contentEl).setName('Start date').setDesc('YYYY-MM-DD. Leave blank for none.')
+			.addText((t) => t.setValue(this.data.start).onChange(bind('start')));
+
+		new Setting(contentEl).setName('Due date')
+			.addText((t) => t.setValue(this.data.due).onChange(bind('due')));
+
+		new Setting(contentEl).setName('Owner')
+			.addText((t) => t.setPlaceholder('optional').onChange(bind('owner')));
+
+		new Setting(contentEl).setName('Company or client')
+			.addText((t) => t.setPlaceholder('optional').onChange(bind('company')));
+
+		const err = contentEl.createDiv({ cls: 'wgantt-modal-error' });
+
+		new Setting(contentEl)
+			.addButton((b) => b.setButtonText('Cancel').onClick(() => this.close()))
+			.addButton((b) => b.setButtonText('Create').setCta().onClick(async () => {
+				err.textContent = '';
+				const problems = [];
+				if (!this.data.title.trim()) problems.push('A name is required.');
+				if (this.data.start && !parseDate(this.data.start)) problems.push('Start date must be YYYY-MM-DD.');
+				if (this.data.due && !parseDate(this.data.due)) problems.push('Due date must be YYYY-MM-DD.');
+				const s = parseDate(this.data.start), d = parseDate(this.data.due);
+				if (s && d && s > d) problems.push('Start is later than due.');
+				if (problems.length) { err.textContent = problems.join(' '); return; }
+
+				try {
+					const file = await createProjectNote(this.app, this.data);
+					new Notice('Created ' + file.path);
+					this.close();
+					if (this.onDone) this.onDone(file);
+				} catch (e) {
+					err.textContent = String(e && e.message ? e.message : e);
+				}
+			}));
+	}
+
+	onClose() { this.contentEl.empty(); }
+}
+
+class EditDatesModal extends Modal {
+	constructor(app, item, onDone) {
+		super(app);
+		this.item = item;
+		this.onDone = onDone;
+		this.values = {
+			start: item.hasStart ? isoDate(item.start) : '',
+			due: item.hasEnd ? isoDate(item.end) : '',
+			status: item.status || '',
+		};
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass('wgantt-modal');
+		contentEl.createEl('h3', { text: this.item.title });
+		contentEl.createEl('p', { cls: 'wgantt-modal-path', text: this.item.path });
+
+		new Setting(contentEl).setName('Start date').setDesc('YYYY-MM-DD, or blank to clear.')
+			.addText((t) => t.setValue(this.values.start).onChange((v) => { this.values.start = v.trim(); }));
+
+		new Setting(contentEl).setName('Due date')
+			.addText((t) => t.setValue(this.values.due).onChange((v) => { this.values.due = v.trim(); }));
+
+		new Setting(contentEl).setName('Status')
+			.addDropdown((d) => {
+				d.addOption('', '(unset)');
+				for (const s of STATUS_CHOICES) d.addOption(s, s);
+				d.setValue(this.values.status).onChange((v) => { this.values.status = v; });
+			});
+
+		const err = contentEl.createDiv({ cls: 'wgantt-modal-error' });
+
+		new Setting(contentEl)
+			.addButton((b) => b.setButtonText('Cancel').onClick(() => this.close()))
+			.addButton((b) => b.setButtonText('Save').setCta().onClick(async () => {
+				err.textContent = '';
+				const problems = [];
+				if (this.values.start && !parseDate(this.values.start)) problems.push('Start date must be YYYY-MM-DD.');
+				if (this.values.due && !parseDate(this.values.due)) problems.push('Due date must be YYYY-MM-DD.');
+				const s = parseDate(this.values.start), d = parseDate(this.values.due);
+				if (s && d && s > d) problems.push('Start is later than due.');
+				if (!this.values.start && !this.values.due) problems.push('At least one date is needed, or the item leaves the chart.');
+				if (problems.length) { err.textContent = problems.join(' '); return; }
+
+				const changes = {};
+				changes[this.item.startField] = this.values.start || null;
+				changes[this.item.endField] = this.values.due || null;
+				if (this.values.status) changes[this.item.statusField] = this.values.status;
+
+				try {
+					await applyFrontmatter(this.app, this.item.path, changes);
+					new Notice('Updated ' + this.item.title);
+					this.close();
+					if (this.onDone) this.onDone();
+				} catch (e) {
+					err.textContent = String(e && e.message ? e.message : e);
+				}
+			}));
+	}
+
+	onClose() { this.contentEl.empty(); }
 }
 
 /* ------------------------------------------------------------------ *
@@ -826,7 +1301,7 @@ class GanttBlock extends MarkdownRenderChild {
 			for (const e of errors) el('li', null, ul, e);
 			return;
 		}
-		await buildChart(root, this.plugin, cfg, this.sourcePath);
+		await buildChart(root, this.plugin, cfg, this.sourcePath, () => this.render());
 	}
 }
 
@@ -937,7 +1412,7 @@ class GanttView extends ItemView {
 	}
 
 	async refresh() {
-		await buildChart(this.chartEl, this.plugin, this.cfg, null);
+		await buildChart(this.chartEl, this.plugin, this.cfg, null, () => this.refresh());
 	}
 }
 
@@ -1016,11 +1491,24 @@ class GanttSettingTab extends PluginSettingTab {
 			.addToggle((t) => t.setValue(this.plugin.settings.openInNewPane)
 				.onChange(async (v) => { this.plugin.settings.openInNewPane = v; await save(); }));
 
+		new Setting(containerEl).setName('Editing').setHeading();
+
+		new Setting(containerEl)
+			.setName('Allow editing')
+			.setDesc('When on, the chart can create notes and change start_date, due_date, ' +
+				'status, and completed_date. Turn it off to make the plugin read-only.')
+			.addToggle((t) => t.setValue(this.plugin.settings.allowEditing)
+				.onChange(async (v) => { this.plugin.settings.allowEditing = v; await save(); }));
+
+		text('New project folder', 'Where "New project" puts new notes.', 'newProjectFolder', '03_Projects/Active');
+
 		new Setting(containerEl).setName('About').setHeading();
 		const about = containerEl.createDiv({ cls: 'wgantt-about' });
 		about.createEl('p', {
-			text: 'This plugin makes no network requests, and writes nothing to your vault ' +
-				'except this settings file. It reads note frontmatter and renders a chart.',
+			text: 'This plugin makes no network requests. It does write to your vault, but only ' +
+				'to create a note you asked for, or to set start_date, due_date, status and ' +
+				'completed_date on an existing one. Frontmatter edits go through Obsidian’s own ' +
+				'processFrontMatter, so note bodies are never touched and nothing is deleted.',
 		});
 	}
 }
@@ -1045,6 +1533,18 @@ module.exports = class GanttCalendarPlugin extends Plugin {
 			id: 'open-gantt-view',
 			name: 'Open Gantt calendar',
 			callback: () => { this.activateView(); },
+		});
+
+		this.addCommand({
+			id: 'new-gantt-project',
+			name: 'New project',
+			callback: () => {
+				if (!this.settings.allowEditing) {
+					new Notice('Editing is turned off in the Gantt Calendar settings.');
+					return;
+				}
+				new NewProjectModal(this.app, this, null).open();
+			},
 		});
 
 		this.addCommand({
@@ -1100,5 +1600,7 @@ module.exports.__test = {
 	startOfWeek, startOfMonth, startOfQuarter, startOfYear,
 	parseConfig, defaultConfig, normaliseSpans, sortItems, stepStarts,
 	matchesTag, inScope, tickLabel, majorLabel,
-	SCALES, STATUS_COLORS, DEFAULT_SETTINGS, VIEW_TYPE_GANTT, RIBBON_ICON,
+	shiftSpan, dragWrites, doneToggleWrites, safeFileName, newProjectContent,
+	SCALES, STATUS_COLORS, STATUS_CHOICES, DEFAULT_SETTINGS,
+	VIEW_TYPE_GANTT, RIBBON_ICON,
 };

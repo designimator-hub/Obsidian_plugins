@@ -24,6 +24,15 @@ class ItemView extends Component {
 	}
 }
 
+class Modal {
+	constructor(app) {
+		this.app = app;
+		this.contentEl = null;
+	}
+	open() { this.opened = true; }
+	close() { this.opened = false; }
+}
+
 class Plugin extends Component {
 	constructor(app, manifest) {
 		super();
@@ -60,7 +69,7 @@ class Setting {
 class MarkdownView {}
 
 module.exports = {
-	Plugin, PluginSettingTab, Setting, MarkdownRenderChild, ItemView,
+	Plugin, PluginSettingTab, Setting, MarkdownRenderChild, ItemView, Modal,
 	MarkdownView, Component,
 	Notice: class Notice {},
 	TFile: class TFile {},

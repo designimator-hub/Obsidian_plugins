@@ -457,6 +457,165 @@ checkAsync('onload registers the view, ribbon icon, and commands', async () => {
 	ok(p.registered.commands.includes('insert-gantt-block'), 'insert command missing');
 });
 
+/* ---------- drag arithmetic ---------- */
+
+const span = (a, b) => ({ start: T.parseDate(a), end: T.parseDate(b) });
+
+check('shiftSpan move shifts both ends by the same amount', () => {
+	const r = T.shiftSpan('move', T.parseDate('2026-09-01'), T.parseDate('2026-09-10'), 5);
+	eq(iso(r.start), '2026-09-06');
+	eq(iso(r.end), '2026-09-15');
+});
+
+check('shiftSpan move works backwards', () => {
+	const r = T.shiftSpan('move', T.parseDate('2026-09-01'), T.parseDate('2026-09-10'), -3);
+	eq(iso(r.start), '2026-08-29');
+	eq(iso(r.end), '2026-09-07');
+});
+
+check('shiftSpan start moves only the left edge', () => {
+	const r = T.shiftSpan('start', T.parseDate('2026-09-01'), T.parseDate('2026-09-10'), 4);
+	eq(iso(r.start), '2026-09-05');
+	eq(iso(r.end), '2026-09-10');
+});
+
+check('shiftSpan start cannot be dragged past the end', () => {
+	const r = T.shiftSpan('start', T.parseDate('2026-09-01'), T.parseDate('2026-09-10'), 60);
+	eq(iso(r.start), '2026-09-10', 'clamped to the end date:');
+	eq(iso(r.end), '2026-09-10');
+});
+
+check('shiftSpan end cannot be dragged before the start', () => {
+	const r = T.shiftSpan('end', T.parseDate('2026-09-01'), T.parseDate('2026-09-10'), -60);
+	eq(iso(r.start), '2026-09-01');
+	eq(iso(r.end), '2026-09-01', 'clamped to the start date:');
+});
+
+check('shiftSpan does not mutate its inputs', () => {
+	const a = T.parseDate('2026-09-01');
+	const b = T.parseDate('2026-09-10');
+	T.shiftSpan('move', a, b, 30);
+	eq(iso(a), '2026-09-01', 'input start was mutated:');
+	eq(iso(b), '2026-09-10', 'input end was mutated:');
+});
+
+check('shiftSpan crosses month and year boundaries', () => {
+	const r = T.shiftSpan('move', T.parseDate('2026-12-28'), T.parseDate('2026-12-31'), 5);
+	eq(iso(r.start), '2027-01-02');
+	eq(iso(r.end), '2027-01-05');
+});
+
+/* ---------- what a drag writes ---------- */
+
+const item = (over) => Object.assign({
+	hasStart: true, hasEnd: true,
+	startField: 'start_date', endField: 'due_date',
+	doneField: 'completed_date', statusField: 'status',
+	status: 'active',
+}, over || {});
+
+check('dragging a two-date bar writes both fields', () => {
+	const w = T.dragWrites(item(), 'move', span('2026-09-06', '2026-09-15'));
+	eq(w, { start_date: '2026-09-06', due_date: '2026-09-15' });
+});
+
+check('dragging a due-only milestone does not invent a start date', () => {
+	const w = T.dragWrites(item({ hasStart: false }), 'move', span('2026-09-06', '2026-09-15'));
+	eq(w, { due_date: '2026-09-15' }, 'start_date must not appear:');
+});
+
+check('dragging a start-only milestone does not invent a due date', () => {
+	const w = T.dragWrites(item({ hasEnd: false }), 'move', span('2026-09-06', '2026-09-15'));
+	eq(w, { start_date: '2026-09-06' }, 'due_date must not appear:');
+});
+
+check('resizing writes only the edge that moved', () => {
+	eq(T.dragWrites(item(), 'start', span('2026-09-05', '2026-09-10')), { start_date: '2026-09-05' });
+	eq(T.dragWrites(item(), 'end', span('2026-09-01', '2026-09-20')), { due_date: '2026-09-20' });
+});
+
+check('dragWrites honours custom field names', () => {
+	const w = T.dragWrites(item({ startField: 'begins', endField: 'ends' }), 'move', span('2026-01-01', '2026-01-05'));
+	eq(w, { begins: '2026-01-01', ends: '2026-01-05' });
+});
+
+/* ---------- done toggle ---------- */
+
+check('done toggle on an open item completes it and stamps today', () => {
+	const r = T.doneToggleWrites(item({ status: 'active' }), '2026-07-31');
+	eq(r.nowDone, true);
+	eq(r.changes, { status: 'completed', completed_date: '2026-07-31' });
+});
+
+check('done toggle on a completed item reopens it and clears the date', () => {
+	const r = T.doneToggleWrites(item({ status: 'completed' }), '2026-07-31');
+	eq(r.nowDone, false);
+	eq(r.changes.status, 'active');
+	eq(r.changes.completed_date, null, 'null means delete the key:');
+});
+
+check('done toggle is reversible', () => {
+	const open = item({ status: 'active' });
+	const first = T.doneToggleWrites(open, '2026-07-31');
+	const closed = item({ status: first.changes.status });
+	const second = T.doneToggleWrites(closed, '2026-07-31');
+	eq(second.changes.status, 'active', 'toggling twice returns to active:');
+});
+
+/* ---------- new note creation ---------- */
+
+check('safeFileName strips characters Obsidian rejects', () => {
+	eq(T.safeFileName('JARVIS: 3F/ICU *fit-out*?'), 'JARVIS- 3F-ICU -fit-out--');
+	eq(T.safeFileName('  spaced   out  '), 'spaced out');
+});
+
+check('safeFileName refuses to produce a dotfile', () => {
+	eq(T.safeFileName('...hidden'), 'hidden');
+});
+
+check('safeFileName caps the length', () => {
+	ok(T.safeFileName('x'.repeat(400)).length <= 120);
+});
+
+check('newProjectContent produces parseable frontmatter', () => {
+	const md = T.newProjectContent({
+		title: 'Test Project', type: 'project', status: 'active',
+		start: '2026-09-01', due: '2026-12-01', todayIso: '2026-07-31',
+		owner: 'James Wright', company: 'Anicom',
+	});
+	ok(md.startsWith('---\n'), 'must open with frontmatter');
+	const end = md.indexOf('\n---\n', 4);
+	ok(end > 0, 'frontmatter must close');
+	const fm = md.slice(4, end);
+	ok(/^start_date: 2026-09-01$/m.test(fm), 'start_date missing');
+	ok(/^due_date: 2026-12-01$/m.test(fm), 'due_date missing');
+	ok(/^status: active$/m.test(fm), 'status missing');
+	ok(/^owner: James Wright$/m.test(fm), 'owner missing');
+	ok(md.includes('# Test Project'), 'body heading missing');
+});
+
+check('newProjectContent omits optional keys when unset', () => {
+	const md = T.newProjectContent({ title: 'Bare', todayIso: '2026-07-31' });
+	const fm = md.slice(4, md.indexOf('\n---\n', 4));
+	ok(!/^owner:/m.test(fm), 'owner should be absent');
+	ok(!/^company:/m.test(fm), 'company should be absent');
+	ok(/^start_date:\s*$/m.test(fm), 'start_date should be present but blank');
+});
+
+check('readonly option is parsed', () => {
+	eq(T.parseConfig('readonly: true').cfg.readonly, true);
+	eq(T.parseConfig('readonly: false').cfg.readonly, false);
+	eq(T.defaultConfig().readonly, false);
+});
+
+check('every editable status choice has a colour or falls back cleanly', () => {
+	for (const s of T.STATUS_CHOICES) {
+		ok(typeof s === 'string' && s.length > 0);
+	}
+	ok(T.STATUS_CHOICES.includes('completed'), 'done toggle depends on "completed"');
+	ok(T.STATUS_CHOICES.includes('active'), 'reopen depends on "active"');
+});
+
 /* ---------- source hygiene ---------- */
 
 check('source contains no network or dynamic-execution calls', () => {

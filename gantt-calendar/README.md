@@ -2,7 +2,7 @@
 
 A Gantt chart for Obsidian that reads dates out of your note frontmatter.
 
-Built to be auditable rather than featureful. Three files, no dependencies, no build step, and no network code — you can read the whole thing in one sitting and know what it does.
+Built to be auditable rather than featureful. Three files, no dependencies, no build step, and no network code — you can read the whole thing in one sitting and know what it does. Bars are draggable, and rows have done and edit controls, so the chart writes back to your notes; see [Editing](#editing) for exactly what it touches.
 
 ## Install
 
@@ -17,7 +17,7 @@ There is no build step. Copy the plugin folder into your vault:
 
 Then enable it in **Settings → Community plugins**.
 
-To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,000 lines, commented, and written in plain JavaScript rather than bundled output.
+To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,600 lines, commented, and written in plain JavaScript rather than bundled output.
 
 ## Usage
 
@@ -81,6 +81,7 @@ All options are `key: value`, one per line. Unknown keys are reported as errors 
 | `done-field` | Override the completion field | `completed_date` |
 | `status-field` | Override the status field | `status` |
 | `show-today` | `true` / `false` | from settings |
+| `readonly` | `true` disables editing for this block | `false` |
 
 Field names default to whatever is set in the plugin's settings tab, so if your vault uses `starts`/`ends` you set that once rather than per block.
 
@@ -149,15 +150,39 @@ Bar colours come from the note's `status`:
 
 To restyle it, override the `.wgantt-*` classes in your own CSS snippet. Sizing is driven by three custom properties on `.wgantt-body`: `--wg-label-width`, `--wg-row-height`, `--wg-bar-height`.
 
+## Editing
+
+The chart is editable. This is the one place the plugin writes to your vault, so it is worth knowing exactly what it touches.
+
+| Control | What it writes |
+|---|---|
+| Drag a bar sideways | `start_date` and `due_date` shift together |
+| Drag a bar's left or right edge | Only that one date changes |
+| **✓** on a row (appears on hover) | `status: completed` plus today's date in `completed_date` |
+| **↺** on a completed row | `status: active`, and `completed_date` is removed |
+| **✎** on a row | Opens a dialog for start, due, and status |
+| **+ New project** | Creates a new note with frontmatter and a short skeleton body |
+
+Rules the editing follows:
+
+- Frontmatter changes go through Obsidian's own `processFrontMatter`, so only the YAML block is rewritten. **Note bodies are never touched, and nothing is ever deleted.**
+- Dragging never invents a date. A milestone with only a `due_date` keeps only a `due_date`.
+- An edge cannot be dragged past the opposite edge, so a negative span is not reachable.
+- `updated` is refreshed on every write.
+- Clicking a bar still opens the note. A movement under four pixels counts as a click, not a drag.
+- Inline tasks (`source: tasks`) are **not** editable — that would mean rewriting inline markup rather than YAML. Their rows have no edit controls.
+
+To turn all of this off, either set **Allow editing** to off in the plugin settings, or put `readonly: true` in an individual block.
+
 ## What it does not do
 
 Deliberately:
 
 - **No network access.** There is no `fetch`, `requestUrl`, `XMLHttpRequest`, or `WebSocket` anywhere in the source.
-- **No writes to your notes.** It reads and renders. The only file it writes is its own `data.json` settings.
 - **No dependencies.** Nothing from npm, so there is no supply chain to audit and no `postinstall` script.
-- **No dragging bars to edit dates.** Editing happens in the note, which stays the source of truth.
+- **No editing of inline tasks.** Only frontmatter-backed notes are editable.
 - **No dependency arrows between tasks.** Possible later; it needs a link convention first.
+- **No undo of its own.** A drag writes immediately. Obsidian's file recovery is the safety net; the done toggle is reversible by design.
 
 ## Verifying it yourself
 
