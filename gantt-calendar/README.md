@@ -17,11 +17,15 @@ There is no build step. Copy the plugin folder into your vault:
 
 Then enable it in **Settings → Community plugins**.
 
-To verify what you installed before enabling it, read `main.js` top to bottom. It is about 700 lines, commented, and written in plain JavaScript rather than bundled output.
+To verify what you installed before enabling it, read `main.js` top to bottom. It is around 1,000 lines, commented, and written in plain JavaScript rather than bundled output.
 
 ## Usage
 
-Put a `gantt` code block in any note:
+Two ways in.
+
+**The ribbon icon.** A calendar icon appears in the left ribbon once the plugin is enabled. It opens a vault-wide Gantt as a full tab, with dropdowns for folder, scale, sort, and grouping. Your selections are remembered. The same thing is on the command palette as **Open Gantt calendar**.
+
+**A code block**, for a chart embedded in a specific note:
 
 ````markdown
 ```gantt
@@ -47,6 +51,12 @@ A note with only one date renders as a milestone diamond rather than a zero-widt
 
 There is also an **Insert Gantt block** command if you would rather not type the fence.
 
+> A code block only renders in Reading view or Live Preview. In Source mode you see the raw fence, which looks like the plugin is doing nothing.
+
+### If the chart is empty
+
+A field that exists but is blank does not count — `due_date:` with nothing after it is not a date. The empty state says which of these applies: nothing in scope, nothing with frontmatter, nothing with a date in the configured field, or everything removed by a filter. Read it rather than guessing.
+
 ## Options
 
 All options are `key: value`, one per line. Unknown keys are reported as errors rather than ignored, so a typo never silently produces an empty chart.
@@ -55,6 +65,7 @@ All options are `key: value`, one per line. Unknown keys are reported as errors 
 |---|---|---|
 | `title` | Heading shown above the chart | none |
 | `folder` | Restrict to a folder and its children | whole vault |
+| `file` | A single note by path or name. `this` means the note containing the block | none |
 | `tag` | Comma-separated. `project` also matches `project/design` | none |
 | `status` | Comma-separated allow-list | all |
 | `exclude-status` | Comma-separated deny-list | none |
@@ -97,12 +108,12 @@ to: 2026-10-15
 ```
 ````
 
-Inline tasks rather than notes:
+Dated tasks written in the current note, which needs no frontmatter anywhere:
 
 ````markdown
 ```gantt
+file: this
 source: tasks
-folder: 03_Projects
 scale: week
 ```
 ````

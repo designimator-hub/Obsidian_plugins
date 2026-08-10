@@ -315,9 +315,96 @@
 /* ---------- states ---------- */
 
 .wgantt-empty {
-	padding: 16px 12px;
+	padding: 16px 14px;
 	color: var(--text-muted);
-	font-style: italic;
+}
+
+.wgantt-empty-title {
+	font-weight: var(--font-semibold, 600);
+	color: var(--text-normal);
+	margin-bottom: 6px;
+}
+
+.wgantt-empty-why p {
+	margin: 0 0 8px 0;
+	font-size: var(--font-ui-smaller, 12px);
+	line-height: 1.5;
+}
+
+.wgantt-empty-code {
+	margin: 0;
+	padding: 8px 10px;
+	background: var(--background-secondary, rgba(128, 128, 128, 0.1));
+	border: 1px solid var(--wg-border);
+	border-radius: var(--wg-radius);
+	overflow-x: auto;
+}
+
+.wgantt-empty-code code {
+	font-family: var(--font-monospace, monospace);
+	font-size: var(--font-ui-smaller, 12px);
+	color: var(--text-normal);
+	white-space: pre;
+	background: none;
+}
+
+/* ---------- the view opened by the ribbon icon ---------- */
+
+.wgantt-view {
+	padding: 0;
+}
+
+.wgantt-view .wgantt {
+	border: none;
+	border-radius: 0;
+	margin: 0;
+}
+
+.wgantt-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 10px;
+	padding: 12px 14px;
+	border-bottom: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
+	background: var(--background-secondary, transparent);
+}
+
+.wgantt-control {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.wgantt-control-label {
+	font-size: var(--font-ui-smaller, 12px);
+	color: var(--text-muted);
+}
+
+.wgantt-select {
+	font-family: inherit;
+	font-size: var(--font-ui-small, 13px);
+	color: var(--text-normal);
+	background: var(--background-primary, transparent);
+	border: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
+	border-radius: var(--radius-s, 4px);
+	padding: 4px 6px;
+	max-width: 220px;
+}
+
+.wgantt-btn {
+	font-family: inherit;
+	font-size: var(--font-ui-small, 13px);
+	color: var(--text-normal);
+	background: var(--interactive-normal, transparent);
+	border: 1px solid var(--background-modifier-border, rgba(128, 128, 128, 0.25));
+	border-radius: var(--radius-s, 4px);
+	padding: 5px 12px;
+	cursor: pointer;
+}
+
+.wgantt-btn:hover {
+	background: var(--interactive-hover, rgba(128, 128, 128, 0.15));
 }
 
 .wgantt-error {

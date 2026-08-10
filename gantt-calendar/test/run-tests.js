@@ -385,6 +385,78 @@ check('every scale defines a positive pixels-per-day', () => {
 	}
 });
 
+/* ---------- scoping ---------- */
+
+const fakeFile = (path) => ({
+	path,
+	basename: path.split('/').pop().replace(/\.md$/, ''),
+	parent: { path: path.split('/').slice(0, -1).join('/') || '/' },
+});
+
+check('inScope with no filter accepts everything', () => {
+	const cfg = T.defaultConfig();
+	ok(T.inScope(fakeFile('anywhere/note.md'), cfg, null));
+});
+
+check('inScope folder matches the folder and its children', () => {
+	const cfg = T.defaultConfig();
+	cfg.folder = '03_Projects';
+	ok(T.inScope(fakeFile('03_Projects/Active/JARVIS.md'), cfg, null));
+	ok(!T.inScope(fakeFile('04_Knowledge/Note.md'), cfg, null));
+});
+
+check('inScope folder does not match a partial name', () => {
+	const cfg = T.defaultConfig();
+	cfg.folder = '03_Proj';
+	ok(!T.inScope(fakeFile('03_Projects/Active/JARVIS.md'), cfg, null),
+		'"03_Proj" must not match "03_Projects"');
+});
+
+check('inScope file matches by path or basename', () => {
+	const cfg = T.defaultConfig();
+	cfg.file = 'Gantt Test';
+	ok(T.inScope(fakeFile('Gantt Test.md'), cfg, null));
+	ok(!T.inScope(fakeFile('Other.md'), cfg, null));
+
+	const cfg2 = T.defaultConfig();
+	cfg2.file = '03_Projects/Active/JARVIS.md';
+	ok(T.inScope(fakeFile('03_Projects/Active/JARVIS.md'), cfg2, null));
+});
+
+check('inScope "file: this" resolves to the containing note', () => {
+	const cfg = T.defaultConfig();
+	cfg.file = 'this';
+	ok(T.inScope(fakeFile('Gantt Test.md'), cfg, 'Gantt Test.md'));
+	ok(!T.inScope(fakeFile('Elsewhere.md'), cfg, 'Gantt Test.md'));
+});
+
+check('inScope "file: this" outside a note matches nothing', () => {
+	const cfg = T.defaultConfig();
+	cfg.file = 'this';
+	ok(!T.inScope(fakeFile('Anything.md'), cfg, null), 'the view has no source path');
+});
+
+check('parseConfig accepts the file option', () => {
+	const { cfg, errors } = T.parseConfig('file: this\nsource: tasks');
+	eq(errors, []);
+	eq(cfg.file, 'this');
+	eq(cfg.source, 'tasks');
+});
+
+/* ---------- plugin registration ---------- */
+
+checkAsync('onload registers the view, ribbon icon, and commands', async () => {
+	const p = new Plugin({}, {});
+	p._data = null;
+	await p.onload();
+	eq(p.registered.codeBlocks, ['gantt']);
+	eq(p.registered.views, [T.VIEW_TYPE_GANTT]);
+	eq(p.registered.ribbons.length, 1, 'expected exactly one ribbon icon:');
+	eq(p.registered.ribbons[0].icon, T.RIBBON_ICON);
+	ok(p.registered.commands.includes('open-gantt-view'), 'open command missing');
+	ok(p.registered.commands.includes('insert-gantt-block'), 'insert command missing');
+});
+
 /* ---------- source hygiene ---------- */
 
 check('source contains no network or dynamic-execution calls', () => {

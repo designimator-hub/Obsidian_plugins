@@ -16,18 +16,29 @@ class MarkdownRenderChild extends Component {
 	}
 }
 
+class ItemView extends Component {
+	constructor(leaf) {
+		super();
+		this.leaf = leaf;
+		this.contentEl = null;
+	}
+}
+
 class Plugin extends Component {
 	constructor(app, manifest) {
 		super();
 		this.app = app;
 		this.manifest = manifest;
 		this._data = null;
+		this.registered = { views: [], ribbons: [], commands: [], codeBlocks: [] };
 	}
 	async loadData() { return this._data; }
 	async saveData(d) { this._data = d; }
-	registerMarkdownCodeBlockProcessor() {}
+	registerMarkdownCodeBlockProcessor(lang, fn) { this.registered.codeBlocks.push(lang); }
+	registerView(type, fn) { this.registered.views.push(type); }
+	addRibbonIcon(icon, title, fn) { this.registered.ribbons.push({ icon, title }); return {}; }
 	addSettingTab() {}
-	addCommand() {}
+	addCommand(c) { this.registered.commands.push(c.id); }
 }
 
 class PluginSettingTab {
@@ -49,7 +60,7 @@ class Setting {
 class MarkdownView {}
 
 module.exports = {
-	Plugin, PluginSettingTab, Setting, MarkdownRenderChild,
+	Plugin, PluginSettingTab, Setting, MarkdownRenderChild, ItemView,
 	MarkdownView, Component,
 	Notice: class Notice {},
 	TFile: class TFile {},
